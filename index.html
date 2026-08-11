@@ -1249,9 +1249,29 @@ function isTradingTime() {
   return CONFIG.TRADING_WINDOWS.some(function (w) { return mins >= w[0] && mins <= w[1]; });
 }
 
-// 处理 #import=boardId：从云端把该看板的数据导入本机编辑模式（用于换设备/换域名后迁移）
+// 处理一次性导入链接（用于换设备/换域名后迁移编辑数据）：
+//   #seed=Base64  —— 数据内嵌在链接里（含 boardId/objectId/cash/rows），无需联网，最可靠
+//   #import=boardId —— 从云端拉取该看板数据（需要能访问 Bmob）
 // 导入成功后跳回无 hash 的编辑页；返回 true 表示已接管，不再执行常规初始化
 function tryImport() {
+  const ms = location.hash.match(/#seed=([A-Za-z0-9+/=]+)/);
+  if (ms) {
+    try {
+      const d = decodeData(ms[1]);
+      if (!d || !d.boardId) throw new Error("bad seed");
+      state.cash = Number(d.cash) || 0;
+      state.rows = (Array.isArray(d.rows) ? d.rows : []).map(function (r) {
+        return { code: normalizeCode(r.code), name: r.name || "", cost: Number(r.cost) || 0, qty: Number(r.qty) || 0 };
+      }).filter(function (r) { return !!r.code; });
+      boardMeta = { boardId: d.boardId, objectId: d.objectId || null };
+      saveBoardMeta();
+      saveLocal();
+      location.href = location.pathname; // 去掉 hash，进入编辑模式
+    } catch (e) {
+      toast("导入数据解析失败");
+    }
+    return true;
+  }
   const mi = location.hash.match(/#import=([a-z0-9]+)/);
   if (!mi || !syncConfigured()) return false;
   (async function () {
