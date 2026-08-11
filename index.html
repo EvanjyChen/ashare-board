@@ -1249,8 +1249,36 @@ function isTradingTime() {
   return CONFIG.TRADING_WINDOWS.some(function (w) { return mins >= w[0] && mins <= w[1]; });
 }
 
+// 处理 #import=boardId：从云端把该看板的数据导入本机编辑模式（用于换设备/换域名后迁移）
+// 导入成功后跳回无 hash 的编辑页；返回 true 表示已接管，不再执行常规初始化
+function tryImport() {
+  const mi = location.hash.match(/#import=([a-z0-9]+)/);
+  if (!mi || !syncConfigured()) return false;
+  (async function () {
+    try {
+      const where = encodeURIComponent(JSON.stringify({ boardId: mi[1] }));
+      const resp = await fetch(syncUrl("?where=" + where + "&limit=1"), { headers: syncHeaders() });
+      const json = await resp.json();
+      const obj = (json.results && json.results[0]) || null;
+      if (!obj) { toast("未找到该看板的云端数据"); return; }
+      state.cash = Number(obj.cash) || 0;
+      state.rows = (Array.isArray(obj.rows) ? obj.rows : []).map(function (r) {
+        return { code: normalizeCode(r.code), name: r.name || "", cost: Number(r.cost) || 0, qty: Number(r.qty) || 0 };
+      }).filter(function (r) { return !!r.code; });
+      boardMeta = { boardId: mi[1], objectId: obj.objectId || null };
+      saveBoardMeta();
+      saveLocal();
+      location.href = location.pathname; // 去掉 hash，进入编辑模式
+    } catch (e) {
+      toast("云端数据导入失败");
+    }
+  })();
+  return true;
+}
+
 function init() {
   initTheme();
+  if (tryImport()) return; // #import= 导入流程接管
   initMode();
   bindEvents();
   if (MODE === "edit") renderForm();
