@@ -1270,7 +1270,8 @@ function tryImport() {
       saveLocal();
       location.href = location.pathname; // 去掉 hash，进入编辑模式
     } catch (e) {
-      toast("云端数据导入失败");
+      toast("云端数据导入失败：" + ((e && e.message) || "网络错误"));
+      console.error("import failed", e);
     }
   })();
   return true;
