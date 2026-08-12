@@ -1106,6 +1106,14 @@ async function pushState() {
     }
     if (boardMeta.objectId) {
       resp = await fetch(syncUrl("/" + boardMeta.objectId), { method: "PUT", headers: syncHeaders(), body: JSON.stringify(payload) });
+      if (resp.status === 400 || resp.status === 404) {
+        // 云端记录被删/失效：丢弃旧 objectId，重走认领/新建流程
+        boardMeta.objectId = null;
+        saveBoardMeta();
+        pushing = false;
+        pushState();
+        return;
+      }
     } else {
       resp = await fetch(syncUrl(""), { method: "POST", headers: syncHeaders(), body: JSON.stringify(payload) });
     }
