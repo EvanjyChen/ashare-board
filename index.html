@@ -1094,6 +1094,16 @@ async function pushState() {
   };
   try {
     let resp;
+    if (!boardMeta.objectId) {
+      // 先查云端是否已有该 boardId 的记录（防止空白编辑端重复 POST 产生副本）
+      const where = encodeURIComponent(JSON.stringify({ boardId: boardMeta.boardId }));
+      const q = await fetch(syncUrl("?where=" + where + "&order=-updatedAt&limit=1"), { headers: syncHeaders() });
+      const qj = await q.json();
+      if (q.ok && qj.results && qj.results[0] && qj.results[0].objectId) {
+        boardMeta.objectId = qj.results[0].objectId; // 认领已有记录
+        saveBoardMeta();
+      }
+    }
     if (boardMeta.objectId) {
       resp = await fetch(syncUrl("/" + boardMeta.objectId), { method: "PUT", headers: syncHeaders(), body: JSON.stringify(payload) });
     } else {
@@ -1117,7 +1127,8 @@ async function pullState() {
   if (MODE !== "board" || !boardMeta || !boardMeta.boardId) return;
   try {
     const where = encodeURIComponent(JSON.stringify({ boardId: boardMeta.boardId }));
-    const resp = await fetch(syncUrl("?where=" + where + "&limit=1"), { headers: syncHeaders() });
+    // order=-updatedAt：即使云端存在同 boardId 的历史副本，也始终读最新那条
+    const resp = await fetch(syncUrl("?where=" + where + "&order=-updatedAt&limit=1"), { headers: syncHeaders() });
     const json = await resp.json();
     if (!resp.ok) throw new Error(json.error || ("http " + resp.status));
     const obj = (json.results && json.results[0]) || null;
