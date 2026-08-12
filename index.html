@@ -1069,8 +1069,8 @@ function genBoardId() {
   return s;
 }
 
-/* ---- 编辑端：推送（防抖 0.8s；推送中又有变动则补发一次） ---- */
-let pushTimer = null, pushing = false, pushAgain = false;
+/* ---- 编辑端：推送（防抖 0.8s；推送中又有变动则补发一次；失败指数退避重试） ---- */
+let pushTimer = null, pushing = false, pushAgain = false, pushRetryCount = 0;
 function schedulePush() {
   if (MODE !== "edit" || !syncConfigured() || !boardMeta || !boardMeta.boardId) return;
   clearTimeout(pushTimer);
@@ -1123,8 +1123,14 @@ async function pushState() {
       boardMeta.objectId = json.objectId;
       saveBoardMeta();
     }
+    pushRetryCount = 0; // 成功：重置重试计数
   } catch (e) {
     throttledToast("syncFail", "云端同步失败，看板数据可能不是最新");
+    // 失败自动重试（10s/20s/30s/40s/50s 指数退避，最多 5 次）
+    if (pushRetryCount < 5) {
+      pushRetryCount++;
+      setTimeout(function () { if (MODE === "edit") pushState(); }, 10000 * pushRetryCount);
+    }
   }
   pushing = false;
   if (pushAgain) { pushAgain = false; schedulePush(); }
