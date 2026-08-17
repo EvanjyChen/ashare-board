@@ -50,7 +50,7 @@
     transition: background .2s, color .2s;
   }
 
-  .container { max-width: 480px; margin: 0 auto; padding: 12px 12px 40px; }
+  .container { max-width: 1180px; margin: 0 auto; padding: 12px 12px 40px; }
 
   /* ============ 顶栏 ============ */
   .topbar {
@@ -91,7 +91,7 @@
   .down { color: var(--down); }
   .flat { color: var(--text-2); }
 
-  /* ============ 持仓卡片 ============ */
+  /* ============ 股票卡片 ============ */
   .holding-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
   .holding-name { font-size: 16px; font-weight: 700; }
   .holding-code { font-size: 12px; color: var(--text-2); margin-top: 1px; }
@@ -105,6 +105,17 @@
   .holding-grid .label { font-size: 11px; color: var(--text-2); }
   .holding-grid .v { font-size: 15px; font-weight: 600; }
   .holding-grid .v.big { font-size: 17px; }
+  .stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; align-items: start; }
+  .stock-card { margin-bottom: 0; }
+  .stock-card-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; margin-bottom: 10px; }
+  .stock-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .tag-chip {
+    display: inline-flex; align-items: center; max-width: 100%;
+    border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px;
+    font-size: 11px; color: var(--text-2); background: var(--input-bg);
+  }
+  .card-note { margin-top: 10px; display: grid; gap: 6px; }
+  .card-note-read { margin-top: 10px; color: var(--text-2); font-size: 12px; display: grid; gap: 4px; }
 
   /* ============ 编辑区 ============ */
   .row-item { display: grid; grid-template-columns: 1.2fr 1fr .9fr .8fr 36px; gap: 6px; margin-bottom: 8px; align-items: center; }
@@ -155,22 +166,19 @@
     border-radius: 999px; padding: 7px 10px; white-space: nowrap; font-size: 13px; cursor: pointer;
   }
   .list-tab.active { border-color: var(--accent); background: var(--accent); color: var(--accent-text); }
+  .view-controls { display: grid; grid-template-columns: 1.4fr .9fr .9fr; gap: 6px; margin: 10px 0; }
   .list-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
-  .stock-line {
-    display: grid; grid-template-columns: 28px 1fr auto; gap: 8px; align-items: center;
-    padding: 10px 0; border-top: 1px solid var(--border);
-  }
-  .stock-line:first-child { border-top: none; }
-  .stock-main { min-width: 0; }
-  .stock-main b { display: block; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .stock-main span { color: var(--text-2); font-size: 12px; }
-  .stock-status { text-align: right; font-size: 12px; color: var(--text-2); }
-  .stock-status b { display: block; color: var(--text); font-size: 13px; }
-  .note-box { grid-column: 2 / 4; display: grid; gap: 6px; margin-top: 2px; }
-  .note-read { grid-column: 2 / 4; color: var(--text-2); font-size: 12px; display: grid; gap: 4px; }
   .muted { color: var(--text-2); }
   @media (max-width: 380px) {
-    .compact-form.three, .list-tools { grid-template-columns: 1fr; }
+    .compact-form.three, .list-tools, .view-controls { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    .container { max-width: 480px; }
+    .stock-grid { grid-template-columns: 1fr; }
+  }
+  @media (min-width: 760px) {
+    .overview .grid { grid-template-columns: repeat(6, 1fr); }
+    .overview .total-value { font-size: 40px; }
   }
 
   /* ============ Toast 轻提示 ============ */
@@ -260,43 +268,58 @@
     <div class="hint">提示：代码填 6 位数字（如 600519，自动识别沪深；北交所 4/8 开头暂不支持）；名称留空将从行情接口自动获取。现金只能通过转入/转出/买入/卖出变动（未计手续费）。数据保存在本机浏览器 localStorage。</div>
   </div>
 
-  <!-- 持仓列表 -->
+  <!-- 行情加载状态 -->
   <div id="loadingTip" class="loading">行情加载中…</div>
-  <div id="holdings"></div>
-  <div id="emptyTip" class="empty" hidden>暂无持仓，请先在上方添加股票。</div>
 
-  <!-- 股票池 / 自选列表 -->
+  <!-- 股票池 / 标签 / 持仓计划复盘 -->
   <div class="card" id="watchPanel">
     <div class="section-title">
-      <h2>股票池与自选列表</h2>
+      <h2>股票池与交易计划</h2>
       <span class="muted" id="watchCount">--</span>
     </div>
     <div class="list-tabs" id="listTabs"></div>
+    <div class="view-controls">
+      <input type="text" id="filterText" placeholder="搜索代码 / 名称 / 计划 / 复盘">
+      <select id="filterStatus">
+        <option value="all">全部股票</option>
+        <option value="held">仅持仓</option>
+        <option value="watch">仅观察</option>
+        <option value="planned">有计划/复盘</option>
+      </select>
+      <select id="sortKey">
+        <option value="held">持仓优先</option>
+        <option value="code">代码升序</option>
+        <option value="name">名称升序</option>
+        <option value="pct_desc">涨幅高到低</option>
+        <option value="pct_asc">涨幅低到高</option>
+        <option value="value_desc">市值高到低</option>
+        <option value="pnl_desc">盈亏高到低</option>
+      </select>
+    </div>
+    <div class="compact-form">
+      <input type="date" id="noteDate">
+      <button class="btn btn-ghost" id="todayNoteBtn">今天</button>
+    </div>
     <div id="watchEditor">
-      <div class="compact-form three">
-        <input type="text" id="newListName" placeholder="新列表名称">
-        <select id="newListParent"></select>
-        <button class="btn btn-primary" id="createListBtn">创建</button>
+      <div class="compact-form">
+        <input type="text" id="newListName" placeholder="新标签名称">
+        <button class="btn btn-primary" id="createListBtn">创建标签</button>
       </div>
       <div class="compact-form three">
         <input type="text" id="watchCode" placeholder="代码 600519" inputmode="numeric" maxlength="9" autocapitalize="off" autocorrect="off">
         <input type="text" id="watchName" placeholder="名称(可空)">
-        <button class="btn btn-ghost" id="addWatchStockBtn">加入当前列表</button>
+        <button class="btn btn-ghost" id="addWatchStockBtn">加入当前标签</button>
       </div>
       <div class="list-tools">
         <select id="moveTarget"></select>
-        <button class="btn btn-primary" id="moveSelectedBtn">批量转移</button>
-        <button class="btn btn-ghost" id="renameListBtn">重命名当前列表</button>
+        <button class="btn btn-primary" id="moveSelectedBtn">批量转移标签</button>
+        <button class="btn btn-ghost" id="renameListBtn">重命名标签</button>
         <button class="btn btn-ghost" id="removeSelectedBtn">移除选中</button>
-        <button class="btn btn-ghost" id="deleteListBtn">删除当前列表</button>
-      </div>
-      <div class="compact-form">
-        <input type="date" id="noteDate">
-        <button class="btn btn-ghost" id="todayNoteBtn">今天</button>
+        <button class="btn btn-ghost" id="deleteListBtn">删除标签</button>
       </div>
     </div>
     <div id="watchItems"></div>
-    <div class="empty" id="watchEmpty" hidden>当前列表暂无股票。</div>
+    <div class="empty" id="watchEmpty" hidden>暂无匹配股票。</div>
   </div>
 
   <!-- 历史净值（可展开） -->
@@ -373,6 +396,9 @@ let lastPulledAt = "";        // 看板模式：最近一次拉到的 updatedAt
 let pullTimer = null;
 let activeListId = "pool";
 let activeNoteDate = "";
+let filterText = "";
+let filterStatus = "all";
+let sortKey = "held";
 
 /* =====================================================================
  * 工具函数
@@ -483,7 +509,7 @@ function normalizeList(list) {
   });
   return {
     id: id,
-    name: String(list.name || "未命名列表"),
+    name: String(list.name || "未命名标签"),
     parentId: list.parentId || "",
     items: items
   };
@@ -1057,7 +1083,6 @@ function calc() {
  * =================================================================== */
 function renderAll() {
   renderOverview();
-  renderHoldings();
   renderWatchlists();
 }
 
@@ -1096,52 +1121,13 @@ function ringSVG(pct) {
     'stroke-dasharray="' + c.toFixed(1) + '" stroke-dashoffset="' + off.toFixed(1) + '"/></svg>';
 }
 
-function renderHoldings() {
-  const c = calc();
-  const wrap = $("holdings");
-  wrap.innerHTML = "";
-  $("loadingTip").hidden = firstQuoteLoaded || !state.rows.length;
-  $("emptyTip").hidden = state.rows.length > 0;
-
-  c.items.forEach(function (it) {
-    const r = it.row, q = it.q;
-    // 持仓占比 = 个股市值 / 股票总市值（不含现金）
-    const weight = (it.value !== null && c.stockValue > 0) ? it.value / c.stockValue * 100 : 0;
-    const name = (q && q.name) || r.name || "未知";
-    const card = document.createElement("div");
-    card.className = "card";
-    card.innerHTML =
-      '<div class="holding-head">' +
-        '<div><div class="holding-name">' + escapeHtml(name) + '</div>' +
-        '<div class="holding-code">' + escapeHtml(codeDigits(r.code)) + '</div></div>' +
-        '<div class="weight-wrap">' + ringSVG(weight) +
-        '<span class="weight-text">' + (it.value !== null && c.stockValue > 0 ? fmt(weight, 1) + "%" : "--") + '</span></div>' +
-      '</div>' +
-      '<div class="holding-grid">' +
-        '<div><div class="label">当前价</div><div class="v big ' + pnlClass(q ? q.change : null) + '">' +
-          (it.price !== null ? fmt(it.price) : "--") + '</div></div>' +
-        '<div><div class="label">日涨跌幅</div><div class="v big ' + pnlClass(q ? q.changePct : null) + '">' +
-          (q && q.changePct !== null ? fmtSigned(q.changePct) + "%" : "--") + '</div></div>' +
-        '<div><div class="label">成本价 / 数量</div><div class="v">' + fmt(r.cost) + " / " + fmt(r.qty, 0) + '</div></div>' +
-        '<div><div class="label">市值</div><div class="v">' + (it.value !== null ? fmt(it.value) : "--") + '</div></div>' +
-        '<div><div class="label">持仓盈亏</div><div class="v ' + pnlClass(it.pnl) + '">' +
-          (it.pnl !== null ? fmtSigned(it.pnl) : "--") + '</div></div>' +
-        '<div><div class="label">盈亏比例</div><div class="v ' + pnlClass(it.pnlPct) + '">' +
-          (it.pnlPct !== null ? fmtSigned(it.pnlPct) + "%" : "--") + '</div></div>' +
-      '</div>';
-    wrap.appendChild(card);
-  });
-}
-
 function listLabel(list) {
-  if (!list.parentId) return list.name;
-  const parent = findList(list.parentId);
-  return (parent ? parent.name + " / " : "") + list.name;
+  return list.name;
 }
 
 function renderListSelectOptions(select, includePool) {
   if (!select) return;
-  select.innerHTML = includePool ? '<option value="pool">总股票池</option>' : '<option value="">无上级列表</option>';
+  select.innerHTML = includePool ? '<option value="pool">总股票池</option>' : "";
   state.lists.forEach(function (list) {
     const opt = document.createElement("option");
     opt.value = list.id;
@@ -1157,14 +1143,13 @@ function renderWatchlists() {
   if (editor) editor.hidden = MODE !== "edit";
   if (!activeNoteDate) activeNoteDate = localDateStr();
   if ($("noteDate") && $("noteDate").value !== activeNoteDate) $("noteDate").value = activeNoteDate;
-  renderListSelectOptions($("newListParent"), false);
   renderListSelectOptions($("moveTarget"), true);
   const moveTarget = $("moveTarget");
   if (moveTarget) moveTarget.value = activeListId === "pool" ? (state.lists[0] ? state.lists[0].id : "pool") : "pool";
 
   const tabs = $("listTabs");
   tabs.innerHTML = "";
-  const allTabs = [{ id: "pool", name: "总股票池", count: state.pool.length }].concat(state.lists.map(function (l) {
+  const allTabs = [{ id: "pool", name: "全部", count: state.pool.length }].concat(state.lists.map(function (l) {
     return { id: l.id, name: listLabel(l), count: l.items.length };
   }));
   allTabs.forEach(function (tab) {
@@ -1178,45 +1163,59 @@ function renderWatchlists() {
     tabs.appendChild(btn);
   });
 
-  const items = getActiveItems();
-  $("watchCount").textContent = state.pool.length + " 只入池";
-  $("watchEmpty").hidden = items.length > 0;
-  const wrap = $("watchItems");
-  wrap.innerHTML = "";
   const noteDate = activeNoteDate || localDateStr();
-  const calcMap = {};
-  calc().items.forEach(function (it) { calcMap[it.row.code] = it; });
+  const rows = buildStockCards(noteDate);
+  $("watchCount").textContent = rows.filtered.length + " / " + rows.total + " 只";
+  $("watchEmpty").hidden = rows.filtered.length > 0;
+  $("loadingTip").hidden = firstQuoteLoaded || rows.total === 0;
 
-  items.forEach(function (code) {
-    const it = calcMap[code] || null;
-    const held = it && it.row.qty > 0;
-    const q = quotes[code];
-    const name = getStockName(code) || "未知";
-    const note = (state.notes[code] && state.notes[code][noteDate]) || { plan: "", review: "" };
-    const line = document.createElement("div");
-    line.className = "stock-line";
-    line.innerHTML =
-      (MODE === "edit" ? '<input type="checkbox" class="watch-check" value="' + escapeHtml(code) + '">' : '<span></span>') +
-      '<div class="stock-main"><b>' + escapeHtml(name) + '</b><span>' + escapeHtml(codeDigits(code)) +
-        (q && q.price ? " · " + fmt(q.price) + " · " + fmtSigned(q.changePct) + "%" : "") + '</span></div>' +
-      '<div class="stock-status">' + (held ? '<b>持仓 ' + fmt(it.row.qty, 0) + '</b><span class="' + pnlClass(it.pnl) + '">' +
-        (it.pnl !== null ? fmtSigned(it.pnl) : "--") + '</span>' : '<b>未持仓</b><span>观察</span>') + '</div>';
+  const wrap = $("watchItems");
+  wrap.className = "stock-grid";
+  wrap.innerHTML = "";
+  rows.filtered.forEach(function (item) {
+    const q = item.q;
+    const note = item.note;
+    const card = document.createElement("div");
+    card.className = "card stock-card";
+    card.innerHTML =
+      '<div class="stock-card-top">' +
+        '<div>' +
+          '<div class="holding-name">' + escapeHtml(item.name) + '</div>' +
+          '<div class="holding-code">' + escapeHtml(codeDigits(item.code)) + '</div>' +
+          '<div class="stock-tags">' + renderTagChips(item.tags, item.held) + '</div>' +
+        '</div>' +
+        '<div class="weight-wrap">' + (item.held ? ringSVG(item.weight) : "") +
+          '<span class="weight-text">' + (item.held ? fmt(item.weight, 1) + "%" : "观察") + '</span></div>' +
+      '</div>' +
+      '<div class="holding-grid">' +
+        '<div><div class="label">当前价</div><div class="v big ' + pnlClass(q ? q.change : null) + '">' +
+          (item.price !== null ? fmt(item.price) : "--") + '</div></div>' +
+        '<div><div class="label">日涨跌幅</div><div class="v big ' + pnlClass(q ? q.changePct : null) + '">' +
+          (q && q.changePct !== null ? fmtSigned(q.changePct) + "%" : "--") + '</div></div>' +
+        '<div><div class="label">成本价 / 数量</div><div class="v">' + (item.held ? fmt(item.cost) + " / " + fmt(item.qty, 0) : "--") + '</div></div>' +
+        '<div><div class="label">市值</div><div class="v">' + (item.value !== null ? fmt(item.value) : "--") + '</div></div>' +
+        '<div><div class="label">持仓盈亏</div><div class="v ' + pnlClass(item.pnl) + '">' +
+          (item.pnl !== null ? fmtSigned(item.pnl) : "--") + '</div></div>' +
+        '<div><div class="label">盈亏比例</div><div class="v ' + pnlClass(item.pnlPct) + '">' +
+          (item.pnlPct !== null ? fmtSigned(item.pnlPct) + "%" : "--") + '</div></div>' +
+      '</div>';
     if (MODE === "edit") {
       const box = document.createElement("div");
-      box.className = "note-box";
+      box.className = "card-note";
       box.innerHTML =
-        '<textarea class="plan-input" data-code="' + escapeHtml(code) + '" placeholder="今日交易计划">' + escapeHtml(note.plan || "") + '</textarea>' +
-        '<textarea class="review-input" data-code="' + escapeHtml(code) + '" placeholder="复盘总结">' + escapeHtml(note.review || "") + '</textarea>';
-      line.appendChild(box);
+        '<label class="muted"><input type="checkbox" class="watch-check" value="' + escapeHtml(item.code) + '"> 选中</label>' +
+        '<textarea class="plan-input" data-code="' + escapeHtml(item.code) + '" placeholder="交易计划">' + escapeHtml(note.plan || "") + '</textarea>' +
+        '<textarea class="review-input" data-code="' + escapeHtml(item.code) + '" placeholder="复盘总结">' + escapeHtml(note.review || "") + '</textarea>';
+      card.appendChild(box);
     } else if ((note.plan || note.review)) {
       const read = document.createElement("div");
-      read.className = "note-read";
+      read.className = "card-note-read";
       read.innerHTML =
         (note.plan ? '<div><b>计划：</b>' + escapeHtml(note.plan) + '</div>' : "") +
         (note.review ? '<div><b>复盘：</b>' + escapeHtml(note.review) + '</div>' : "");
-      line.appendChild(read);
+      card.appendChild(read);
     }
-    wrap.appendChild(line);
+    wrap.appendChild(card);
   });
 
   if (MODE === "edit") {
@@ -1230,6 +1229,99 @@ function renderWatchlists() {
       });
     });
   }
+}
+
+function getStockTags(code) {
+  const tags = [];
+  state.lists.forEach(function (list) {
+    if (list.items.indexOf(code) >= 0) tags.push(list.name);
+  });
+  return tags;
+}
+
+function renderTagChips(tags, held) {
+  const out = [held ? '<span class="tag-chip">持仓</span>' : '<span class="tag-chip">观察</span>'];
+  tags.forEach(function (tag) { out.push('<span class="tag-chip">' + escapeHtml(tag) + '</span>'); });
+  return out.join("");
+}
+
+function buildStockCards(noteDate) {
+  const selectedCodes = getActiveItems();
+  const selectedSet = {};
+  selectedCodes.forEach(function (code) { selectedSet[code] = true; });
+  const c = calc();
+  const calcMap = {};
+  c.items.forEach(function (it) { calcMap[it.row.code] = it; });
+
+  const rows = [];
+  selectedCodes.forEach(function (code) {
+    const it = calcMap[code] || null;
+    const q = quotes[code];
+    const note = (state.notes[code] && state.notes[code][noteDate]) || { plan: "", review: "" };
+    const held = !!(it && it.row.qty > 0);
+    rows.push({
+      code: code,
+      name: getStockName(code) || "未知",
+      tags: getStockTags(code),
+      q: q,
+      note: note,
+      held: held,
+      price: it ? it.price : (q ? q.price : null),
+      qty: it ? it.row.qty : 0,
+      cost: it ? it.row.cost : 0,
+      value: it ? it.value : null,
+      pnl: it ? it.pnl : null,
+      pnlPct: it ? it.pnlPct : null,
+      weight: (it && it.value !== null && c.stockValue > 0) ? it.value / c.stockValue * 100 : 0,
+      changePct: (q && q.changePct !== null && q.changePct !== undefined) ? q.changePct : null
+    });
+  });
+  c.items.forEach(function (it) {
+    if (!selectedSet[it.row.code] && activeListId === "pool") rows.push({
+      code: it.row.code,
+      name: getStockName(it.row.code) || "未知",
+      tags: getStockTags(it.row.code),
+      q: it.q,
+      note: (state.notes[it.row.code] && state.notes[it.row.code][noteDate]) || { plan: "", review: "" },
+      held: it.row.qty > 0,
+      price: it.price,
+      qty: it.row.qty,
+      cost: it.row.cost,
+      value: it.value,
+      pnl: it.pnl,
+      pnlPct: it.pnlPct,
+      weight: (it.value !== null && c.stockValue > 0) ? it.value / c.stockValue * 100 : 0,
+      changePct: it.q && it.q.changePct
+    });
+  });
+
+  const term = filterText.trim().toLowerCase();
+  const filtered = rows.filter(function (item) {
+    const hasNote = !!((item.note.plan || "").trim() || (item.note.review || "").trim());
+    if (filterStatus === "held" && !item.held) return false;
+    if (filterStatus === "watch" && item.held) return false;
+    if (filterStatus === "planned" && !hasNote) return false;
+    if (!term) return true;
+    const hay = [item.code, codeDigits(item.code), item.name, item.note.plan, item.note.review, item.tags.join(" ")].join(" ").toLowerCase();
+    return hay.indexOf(term) >= 0;
+  });
+  filtered.sort(compareStockCards);
+  return { total: rows.length, filtered: filtered };
+}
+
+function numForSort(n, fallback) {
+  return (n === null || n === undefined || !isFinite(n)) ? fallback : n;
+}
+
+function compareStockCards(a, b) {
+  if (sortKey === "code") return codeDigits(a.code).localeCompare(codeDigits(b.code));
+  if (sortKey === "name") return a.name.localeCompare(b.name, "zh-CN");
+  if (sortKey === "pct_desc") return numForSort(b.changePct, -Infinity) - numForSort(a.changePct, -Infinity);
+  if (sortKey === "pct_asc") return numForSort(a.changePct, Infinity) - numForSort(b.changePct, Infinity);
+  if (sortKey === "value_desc") return numForSort(b.value, -Infinity) - numForSort(a.value, -Infinity);
+  if (sortKey === "pnl_desc") return numForSort(b.pnl, -Infinity) - numForSort(a.pnl, -Infinity);
+  if (a.held !== b.held) return a.held ? -1 : 1;
+  return numForSort(b.value, -Infinity) - numForSort(a.value, -Infinity);
 }
 
 function escapeHtml(s) {
@@ -1503,17 +1595,31 @@ function bindEvents() {
 
   $("addRowBtn").addEventListener("click", function () { addRow(); });
 
+  $("filterText").addEventListener("input", function () {
+    filterText = this.value || "";
+    renderWatchlists();
+  });
+
+  $("filterStatus").addEventListener("change", function () {
+    filterStatus = this.value || "all";
+    renderWatchlists();
+  });
+
+  $("sortKey").addEventListener("change", function () {
+    sortKey = this.value || "held";
+    renderWatchlists();
+  });
+
   $("createListBtn").addEventListener("click", function () {
     const name = $("newListName").value.trim();
-    if (!name) { toast("请输入列表名称"); return; }
-    const parentId = $("newListParent").value || "";
-    const list = { id: genId("list"), name: name, parentId: parentId, items: [] };
+    if (!name) { toast("请输入标签名称"); return; }
+    const list = { id: genId("list"), name: name, parentId: "", items: [] };
     state.lists.push(list);
     activeListId = list.id;
     $("newListName").value = "";
     saveLocal();
     renderWatchlists();
-    toast("已创建列表");
+    toast("已创建标签");
   });
 
   $("addWatchStockBtn").addEventListener("click", function () {
@@ -1526,7 +1632,7 @@ function bindEvents() {
     saveLocal();
     refreshQuotes();
     renderWatchlists();
-    toast("已加入当前列表");
+    toast("已加入当前标签");
   });
 
   $("watchCode").addEventListener("blur", function () {
@@ -1540,7 +1646,7 @@ function bindEvents() {
 
   $("moveSelectedBtn").addEventListener("click", function () {
     const targetId = $("moveTarget").value;
-    if (!targetId || targetId === activeListId) { toast("请选择目标列表"); return; }
+    if (!targetId || targetId === activeListId) { toast("请选择目标标签"); return; }
     const selected = Array.from(document.querySelectorAll(".watch-check:checked")).map(function (el) { return normalizeCode(el.value); }).filter(Boolean);
     if (!selected.length) { toast("请先勾选股票"); return; }
     selected.forEach(function (code) { addCodeToList(targetId, code, getStockName(code)); });
@@ -1572,8 +1678,8 @@ function bindEvents() {
 
   $("renameListBtn").addEventListener("click", function () {
     const list = findList(activeListId);
-    if (!list) { toast("总股票池不能重命名"); return; }
-    const name = prompt("新的列表名称", list.name);
+    if (!list) { toast("全部不能重命名"); return; }
+    const name = prompt("新的标签名称", list.name);
     if (!name || !name.trim()) return;
     list.name = name.trim();
     saveLocal();
@@ -1583,14 +1689,14 @@ function bindEvents() {
 
   $("deleteListBtn").addEventListener("click", function () {
     const list = findList(activeListId);
-    if (!list) { toast("总股票池不能删除"); return; }
-    if (!confirm("删除列表「" + list.name + "」？股票仍保留在总股票池。")) return;
+    if (!list) { toast("全部不能删除"); return; }
+    if (!confirm("删除标签「" + list.name + "」？股票仍保留在总股票池。")) return;
     state.lists = state.lists.filter(function (l) { return l.id !== list.id; });
     state.lists.forEach(function (l) { if (l.parentId === list.id) l.parentId = ""; });
     activeListId = "pool";
     saveLocal();
     renderWatchlists();
-    toast("已删除列表");
+    toast("已删除标签");
   });
 
   $("noteDate").addEventListener("change", function () {
