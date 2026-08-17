@@ -110,7 +110,7 @@
   .row-item { display: grid; grid-template-columns: 1.2fr 1fr .9fr .8fr 36px; gap: 6px; margin-bottom: 8px; align-items: center; }
   .row-item input { min-width: 0; } /* grid 子项默认 min-width:auto 会撑破卡片 */
   .row-head { font-size: 11px; color: var(--text-2); }
-  input[type="text"], input[type="number"] {
+  input[type="text"], input[type="number"], input[type="date"] {
     width: 100%; min-height: 44px; padding: 8px 10px; font-size: 16px; /* 16px 避免 iOS 聚焦放大 */
     border: 1px solid var(--border); border-radius: 8px;
     background: var(--input-bg); color: var(--text); outline: none;
@@ -139,6 +139,39 @@
   .btn-buy { background: var(--up); color: #fff; }
   .btn-sell { background: var(--down); color: #fff; }
   .hint { font-size: 12px; color: var(--text-2); margin-top: 10px; }
+  .section-title { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
+  .section-title h2 { font-size: 16px; margin: 0; }
+  .compact-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
+  .compact-form.three { grid-template-columns: 1fr 1fr 1fr; }
+  select, textarea {
+    width: 100%; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--input-bg); color: var(--text); outline: none;
+  }
+  select { min-height: 44px; padding: 8px 10px; font-size: 15px; }
+  textarea { min-height: 72px; padding: 8px 10px; resize: vertical; font-size: 14px; font-family: inherit; }
+  .list-tabs { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 4px; -webkit-overflow-scrolling: touch; }
+  .list-tab {
+    border: 1px solid var(--border); background: var(--card-bg); color: var(--text);
+    border-radius: 999px; padding: 7px 10px; white-space: nowrap; font-size: 13px; cursor: pointer;
+  }
+  .list-tab.active { border-color: var(--accent); background: var(--accent); color: var(--accent-text); }
+  .list-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
+  .stock-line {
+    display: grid; grid-template-columns: 28px 1fr auto; gap: 8px; align-items: center;
+    padding: 10px 0; border-top: 1px solid var(--border);
+  }
+  .stock-line:first-child { border-top: none; }
+  .stock-main { min-width: 0; }
+  .stock-main b { display: block; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stock-main span { color: var(--text-2); font-size: 12px; }
+  .stock-status { text-align: right; font-size: 12px; color: var(--text-2); }
+  .stock-status b { display: block; color: var(--text); font-size: 13px; }
+  .note-box { grid-column: 2 / 4; display: grid; gap: 6px; margin-top: 2px; }
+  .note-read { grid-column: 2 / 4; color: var(--text-2); font-size: 12px; display: grid; gap: 4px; }
+  .muted { color: var(--text-2); }
+  @media (max-width: 380px) {
+    .compact-form.three, .list-tools { grid-template-columns: 1fr; }
+  }
 
   /* ============ Toast 轻提示 ============ */
   #toast {
@@ -232,6 +265,40 @@
   <div id="holdings"></div>
   <div id="emptyTip" class="empty" hidden>暂无持仓，请先在上方添加股票。</div>
 
+  <!-- 股票池 / 自选列表 -->
+  <div class="card" id="watchPanel">
+    <div class="section-title">
+      <h2>股票池与自选列表</h2>
+      <span class="muted" id="watchCount">--</span>
+    </div>
+    <div class="list-tabs" id="listTabs"></div>
+    <div id="watchEditor">
+      <div class="compact-form three">
+        <input type="text" id="newListName" placeholder="新列表名称">
+        <select id="newListParent"></select>
+        <button class="btn btn-primary" id="createListBtn">创建</button>
+      </div>
+      <div class="compact-form three">
+        <input type="text" id="watchCode" placeholder="代码 600519" inputmode="numeric" maxlength="9" autocapitalize="off" autocorrect="off">
+        <input type="text" id="watchName" placeholder="名称(可空)">
+        <button class="btn btn-ghost" id="addWatchStockBtn">加入当前列表</button>
+      </div>
+      <div class="list-tools">
+        <select id="moveTarget"></select>
+        <button class="btn btn-primary" id="moveSelectedBtn">批量转移</button>
+        <button class="btn btn-ghost" id="renameListBtn">重命名当前列表</button>
+        <button class="btn btn-ghost" id="removeSelectedBtn">移除选中</button>
+        <button class="btn btn-ghost" id="deleteListBtn">删除当前列表</button>
+      </div>
+      <div class="compact-form">
+        <input type="date" id="noteDate">
+        <button class="btn btn-ghost" id="todayNoteBtn">今天</button>
+      </div>
+    </div>
+    <div id="watchItems"></div>
+    <div class="empty" id="watchEmpty" hidden>当前列表暂无股票。</div>
+  </div>
+
   <!-- 历史净值（可展开） -->
   <div class="card">
     <button class="history-toggle" id="historyToggle">
@@ -283,7 +350,7 @@ const CONFIG = {
   SYNC_APP_KEY: "b23308362f13c8e912972b04bf151d50",
   SYNC_CLASS: "Board",                // 数据表名（首次推送时自动创建）
   PULL_MS: 5000,                      // 看板模式拉取云端数据的间隔（毫秒）
-  LS_HOLDINGS: "ashare_holdings_v1",  // localStorage：持仓数据 key
+  LS_HOLDINGS: "ashare_holdings_v1",  // localStorage：持仓/股票池/计划复盘数据 key
   LS_TX: "ashare_tx_v1",              // localStorage：交易流水 key
   LS_BOARD: "ashare_board_v1",        // localStorage：看板 ID/云端 objectId
   LS_SNAPSHOTS: "ashare_snapshots_v1",// localStorage：历史净值快照 key
@@ -297,13 +364,15 @@ const CONFIG = {
  * 全局状态
  * =================================================================== */
 let MODE = "edit";            // "edit" | "board"（有 #data= 或 #board= 时进入只读看板）
-let state = { cash: 0, rows: [] };  // rows: [{code,name,cost,qty}]
+let state = { cash: 0, rows: [], lists: [], pool: [], notes: {} };  // rows: [{code,name,cost,qty}]
 let quotes = {};              // code -> {name,open,prevClose,price,change,changePct,date}
 let firstQuoteLoaded = false; // 首次行情是否已成功返回（用于首次打开即记快照）
 let refreshTimer = null;
 let boardMeta = null;         // {boardId, objectId} 云端看板元信息（编辑模式持久化在本地）
 let lastPulledAt = "";        // 看板模式：最近一次拉到的 updatedAt
 let pullTimer = null;
+let activeListId = "pool";
+let activeNoteDate = "";
 
 /* =====================================================================
  * 工具函数
@@ -348,6 +417,7 @@ function decodeData(str) {
 }
 
 function saveLocal() {
+  ensureStateShape();
   try { localStorage.setItem(CONFIG.LS_HOLDINGS, JSON.stringify(state)); } catch (e) {}
   schedulePush(); // 每次本地变动后（防抖）自动同步到云端看板
 }
@@ -383,9 +453,134 @@ function loadLocal() {
         state.rows = d.rows.map(function (r) {
           return { code: normalizeCode(r.code), name: r.name || "", cost: Number(r.cost) || 0, qty: Number(r.qty) || 0 };
         }).filter(function (r) { return !!r.code; });
+        state.lists = Array.isArray(d.lists) ? d.lists.map(normalizeList).filter(Boolean) : [];
+        state.pool = Array.isArray(d.pool) ? d.pool.map(normalizeStockItem).filter(Boolean) : [];
+        state.notes = (d.notes && typeof d.notes === "object") ? d.notes : {};
       }
     }
   } catch (e) {}
+  ensureStateShape();
+}
+
+function genId(prefix) {
+  return prefix + "_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function normalizeStockItem(item) {
+  const code = normalizeCode(item && item.code);
+  if (!code) return null;
+  return { code: code, name: (item && item.name) || "" };
+}
+
+function normalizeList(list) {
+  if (!list || !Array.isArray(list.items)) return null;
+  const id = String(list.id || genId("list"));
+  const seen = {};
+  const items = [];
+  list.items.forEach(function (code) {
+    code = normalizeCode(code);
+    if (code && !seen[code]) { seen[code] = true; items.push(code); }
+  });
+  return {
+    id: id,
+    name: String(list.name || "未命名列表"),
+    parentId: list.parentId || "",
+    items: items
+  };
+}
+
+function ensureStateShape() {
+  if (!state || typeof state !== "object") state = { cash: 0, rows: [] };
+  if (!Array.isArray(state.rows)) state.rows = [];
+  if (!Array.isArray(state.lists)) state.lists = [];
+  if (!Array.isArray(state.pool)) state.pool = [];
+  if (!state.notes || typeof state.notes !== "object") state.notes = {};
+  const poolSeen = {};
+  state.pool = state.pool.map(normalizeStockItem).filter(function (item) {
+    if (!item || poolSeen[item.code]) return false;
+    poolSeen[item.code] = true;
+    return true;
+  });
+  state.rows.forEach(function (r) {
+    if (r.code && !poolSeen[r.code]) {
+      state.pool.push({ code: r.code, name: r.name || "" });
+      poolSeen[r.code] = true;
+    }
+  });
+  state.lists = state.lists.map(normalizeList).filter(Boolean);
+}
+
+function findList(id) {
+  return state.lists.find(function (list) { return list.id === id; }) || null;
+}
+
+function getActiveItems() {
+  ensureStateShape();
+  if (activeListId === "pool") return state.pool.map(function (item) { return item.code; });
+  const list = findList(activeListId);
+  return list ? list.items.slice() : [];
+}
+
+function getStockName(code) {
+  const q = quotes[code];
+  if (q && q.name) return q.name;
+  const held = state.rows.find(function (r) { return r.code === code && r.name; });
+  if (held) return held.name;
+  const pooled = state.pool.find(function (r) { return r.code === code && r.name; });
+  if (pooled) return pooled.name;
+  return "";
+}
+
+function upsertPoolStock(code, name) {
+  code = normalizeCode(code);
+  if (!code) return false;
+  ensureStateShape();
+  let item = state.pool.find(function (s) { return s.code === code; });
+  if (!item) {
+    state.pool.push({ code: code, name: name || "" });
+  } else if (name && !item.name) {
+    item.name = name;
+  }
+  return true;
+}
+
+function addCodeToList(listId, code, name) {
+  code = normalizeCode(code);
+  if (!code) return false;
+  upsertPoolStock(code, name);
+  if (listId !== "pool") {
+    const list = findList(listId);
+    if (list && list.items.indexOf(code) < 0) list.items.push(code);
+  }
+  return true;
+}
+
+function noteFor(code, date) {
+  if (!state.notes[code]) state.notes[code] = {};
+  if (!state.notes[code][date]) state.notes[code][date] = { plan: "", review: "" };
+  return state.notes[code][date];
+}
+
+function applyBoardData(d) {
+  state.cash = Number(d && d.cash) || 0;
+  state.rows = (d && Array.isArray(d.rows) ? d.rows : []).map(function (r) {
+    return { code: normalizeCode(r.code), name: r.name || "", cost: Number(r.cost) || 0, qty: Number(r.qty) || 0 };
+  }).filter(function (r) { return !!r.code; });
+  state.lists = (d && Array.isArray(d.lists) ? d.lists : []).map(normalizeList).filter(Boolean);
+  state.pool = (d && Array.isArray(d.pool) ? d.pool : []).map(normalizeStockItem).filter(Boolean);
+  state.notes = (d && d.notes && typeof d.notes === "object") ? d.notes : {};
+  ensureStateShape();
+}
+
+function boardDataPayload() {
+  ensureStateShape();
+  return {
+    cash: state.cash,
+    rows: state.rows,
+    lists: state.lists,
+    pool: state.pool,
+    notes: state.notes
+  };
 }
 
 function loadSnapshots() {
@@ -433,11 +628,7 @@ function initMode() {
         const d = decodeData(m[1]);
         if (d && Array.isArray(d.rows)) {
           MODE = "board";
-          state.cash = Number(d.cash) || 0;
-          // 兼容旧链接：统一规范为内部带前缀代码
-          state.rows = d.rows.map(function (r) {
-            return { code: normalizeCode(r.code), name: r.name || "", cost: Number(r.cost) || 0, qty: Number(r.qty) || 0 };
-          }).filter(function (r) { return !!r.code; });
+          applyBoardData(d);
         }
       } catch (e) {
         toast("分享链接数据解析失败");
@@ -767,7 +958,15 @@ let fetching = false;
 let activeProvider = ""; // 当前实际生效的行情源名称
 async function refreshQuotes() {
   if (fetching) return;
-  const codes = state.rows.map(function (r) { return r.code; }).filter(Boolean);
+  const seenCodes = {};
+  const codes = [];
+  function addQuoteCode(code) {
+    code = normalizeCode(code);
+    if (code && !seenCodes[code]) { seenCodes[code] = true; codes.push(code); }
+  }
+  state.rows.forEach(function (r) { addQuoteCode(r.code); });
+  state.pool.forEach(function (r) { addQuoteCode(r.code); });
+  state.lists.forEach(function (list) { list.items.forEach(addQuoteCode); });
   if (!codes.length) {
     quotes = {};
     renderAll();
@@ -810,6 +1009,9 @@ function autoFillNames() {
     if (code && !nameInput.value.trim() && quotes[code] && quotes[code].name) {
       nameInput.value = quotes[code].name;
     }
+  });
+  state.pool.forEach(function (item) {
+    if (item.code && !item.name && quotes[item.code] && quotes[item.code].name) item.name = quotes[item.code].name;
   });
   syncStateFromForm();
   saveLocal();
@@ -856,6 +1058,7 @@ function calc() {
 function renderAll() {
   renderOverview();
   renderHoldings();
+  renderWatchlists();
 }
 
 function renderOverview() {
@@ -928,6 +1131,105 @@ function renderHoldings() {
       '</div>';
     wrap.appendChild(card);
   });
+}
+
+function listLabel(list) {
+  if (!list.parentId) return list.name;
+  const parent = findList(list.parentId);
+  return (parent ? parent.name + " / " : "") + list.name;
+}
+
+function renderListSelectOptions(select, includePool) {
+  if (!select) return;
+  select.innerHTML = includePool ? '<option value="pool">总股票池</option>' : '<option value="">无上级列表</option>';
+  state.lists.forEach(function (list) {
+    const opt = document.createElement("option");
+    opt.value = list.id;
+    opt.textContent = listLabel(list);
+    select.appendChild(opt);
+  });
+}
+
+function renderWatchlists() {
+  ensureStateShape();
+  if (activeListId !== "pool" && !findList(activeListId)) activeListId = "pool";
+  const editor = $("watchEditor");
+  if (editor) editor.hidden = MODE !== "edit";
+  if (!activeNoteDate) activeNoteDate = localDateStr();
+  if ($("noteDate") && $("noteDate").value !== activeNoteDate) $("noteDate").value = activeNoteDate;
+  renderListSelectOptions($("newListParent"), false);
+  renderListSelectOptions($("moveTarget"), true);
+  const moveTarget = $("moveTarget");
+  if (moveTarget) moveTarget.value = activeListId === "pool" ? (state.lists[0] ? state.lists[0].id : "pool") : "pool";
+
+  const tabs = $("listTabs");
+  tabs.innerHTML = "";
+  const allTabs = [{ id: "pool", name: "总股票池", count: state.pool.length }].concat(state.lists.map(function (l) {
+    return { id: l.id, name: listLabel(l), count: l.items.length };
+  }));
+  allTabs.forEach(function (tab) {
+    const btn = document.createElement("button");
+    btn.className = "list-tab" + (tab.id === activeListId ? " active" : "");
+    btn.textContent = tab.name + " " + tab.count;
+    btn.addEventListener("click", function () {
+      activeListId = tab.id;
+      renderWatchlists();
+    });
+    tabs.appendChild(btn);
+  });
+
+  const items = getActiveItems();
+  $("watchCount").textContent = state.pool.length + " 只入池";
+  $("watchEmpty").hidden = items.length > 0;
+  const wrap = $("watchItems");
+  wrap.innerHTML = "";
+  const noteDate = activeNoteDate || localDateStr();
+  const calcMap = {};
+  calc().items.forEach(function (it) { calcMap[it.row.code] = it; });
+
+  items.forEach(function (code) {
+    const it = calcMap[code] || null;
+    const held = it && it.row.qty > 0;
+    const q = quotes[code];
+    const name = getStockName(code) || "未知";
+    const note = (state.notes[code] && state.notes[code][noteDate]) || { plan: "", review: "" };
+    const line = document.createElement("div");
+    line.className = "stock-line";
+    line.innerHTML =
+      (MODE === "edit" ? '<input type="checkbox" class="watch-check" value="' + escapeHtml(code) + '">' : '<span></span>') +
+      '<div class="stock-main"><b>' + escapeHtml(name) + '</b><span>' + escapeHtml(codeDigits(code)) +
+        (q && q.price ? " · " + fmt(q.price) + " · " + fmtSigned(q.changePct) + "%" : "") + '</span></div>' +
+      '<div class="stock-status">' + (held ? '<b>持仓 ' + fmt(it.row.qty, 0) + '</b><span class="' + pnlClass(it.pnl) + '">' +
+        (it.pnl !== null ? fmtSigned(it.pnl) : "--") + '</span>' : '<b>未持仓</b><span>观察</span>') + '</div>';
+    if (MODE === "edit") {
+      const box = document.createElement("div");
+      box.className = "note-box";
+      box.innerHTML =
+        '<textarea class="plan-input" data-code="' + escapeHtml(code) + '" placeholder="今日交易计划">' + escapeHtml(note.plan || "") + '</textarea>' +
+        '<textarea class="review-input" data-code="' + escapeHtml(code) + '" placeholder="复盘总结">' + escapeHtml(note.review || "") + '</textarea>';
+      line.appendChild(box);
+    } else if ((note.plan || note.review)) {
+      const read = document.createElement("div");
+      read.className = "note-read";
+      read.innerHTML =
+        (note.plan ? '<div><b>计划：</b>' + escapeHtml(note.plan) + '</div>' : "") +
+        (note.review ? '<div><b>复盘：</b>' + escapeHtml(note.review) + '</div>' : "");
+      line.appendChild(read);
+    }
+    wrap.appendChild(line);
+  });
+
+  if (MODE === "edit") {
+    wrap.querySelectorAll(".plan-input,.review-input").forEach(function (ta) {
+      ta.addEventListener("input", function () {
+        const code = normalizeCode(this.getAttribute("data-code"));
+        const n = noteFor(code, noteDate);
+        if (this.classList.contains("plan-input")) n.plan = this.value;
+        if (this.classList.contains("review-input")) n.review = this.value;
+        saveLocal();
+      });
+    });
+  }
 }
 
 function escapeHtml(s) {
@@ -1086,12 +1388,10 @@ async function pushState() {
   if (pushing) { pushAgain = true; return; }
   pushing = true;
   // 注意：不要用 updatedAt/createdAt/objectId 作为自定义字段名（两家都保留）
-  const payload = {
+  const payload = Object.assign({
     boardId: boardMeta.boardId,
-    cash: state.cash,
-    rows: state.rows,
     syncedAt: new Date().toISOString()
-  };
+  }, boardDataPayload());
   try {
     let resp;
     if (!boardMeta.objectId) {
@@ -1149,10 +1449,7 @@ async function pullState() {
     if (!obj) { throttledToast("pullEmpty", "看板数据不存在或已被删除"); return; }
     if (obj.syncedAt && obj.syncedAt === lastPulledAt) return; // 无变化
     lastPulledAt = obj.syncedAt || "";
-    state.cash = Number(obj.cash) || 0;
-    state.rows = (Array.isArray(obj.rows) ? obj.rows : []).map(function (r) {
-      return { code: normalizeCode(r.code), name: r.name || "", cost: Number(r.cost) || 0, qty: Number(r.qty) || 0 };
-    }).filter(function (r) { return !!r.code; });
+    applyBoardData(obj);
     renderAll();
     refreshQuotes(); // 持仓可能变化，立即拉价
   } catch (e) {
@@ -1166,7 +1463,7 @@ async function pullState() {
 function makeShareLink() {
   syncStateFromForm();
   saveLocal();
-  const data = { cash: state.cash, rows: state.rows };
+  const data = boardDataPayload();
   const base = location.href.split("#")[0];
   return base + "#data=" + encodeData(data);
 }
@@ -1205,6 +1502,107 @@ function bindEvents() {
   });
 
   $("addRowBtn").addEventListener("click", function () { addRow(); });
+
+  $("createListBtn").addEventListener("click", function () {
+    const name = $("newListName").value.trim();
+    if (!name) { toast("请输入列表名称"); return; }
+    const parentId = $("newListParent").value || "";
+    const list = { id: genId("list"), name: name, parentId: parentId, items: [] };
+    state.lists.push(list);
+    activeListId = list.id;
+    $("newListName").value = "";
+    saveLocal();
+    renderWatchlists();
+    toast("已创建列表");
+  });
+
+  $("addWatchStockBtn").addEventListener("click", function () {
+    const code = normalizeCode($("watchCode").value);
+    const name = $("watchName").value.trim();
+    if (!code) { toast("请输入 6 位股票代码"); return; }
+    addCodeToList(activeListId, code, name);
+    $("watchCode").value = "";
+    $("watchName").value = "";
+    saveLocal();
+    refreshQuotes();
+    renderWatchlists();
+    toast("已加入当前列表");
+  });
+
+  $("watchCode").addEventListener("blur", function () {
+    const code = normalizeCode(this.value);
+    this.value = codeDigits(code);
+    if (!code) return;
+    refreshQuotes().then(function () {
+      if (!$("watchName").value && quotes[code] && quotes[code].name) $("watchName").value = quotes[code].name;
+    });
+  });
+
+  $("moveSelectedBtn").addEventListener("click", function () {
+    const targetId = $("moveTarget").value;
+    if (!targetId || targetId === activeListId) { toast("请选择目标列表"); return; }
+    const selected = Array.from(document.querySelectorAll(".watch-check:checked")).map(function (el) { return normalizeCode(el.value); }).filter(Boolean);
+    if (!selected.length) { toast("请先勾选股票"); return; }
+    selected.forEach(function (code) { addCodeToList(targetId, code, getStockName(code)); });
+    if (activeListId !== "pool") {
+      const src = findList(activeListId);
+      if (src) src.items = src.items.filter(function (code) { return selected.indexOf(code) < 0; });
+    }
+    saveLocal();
+    renderWatchlists();
+    toast("已批量转移 " + selected.length + " 只");
+  });
+
+  $("removeSelectedBtn").addEventListener("click", function () {
+    const selected = Array.from(document.querySelectorAll(".watch-check:checked")).map(function (el) { return normalizeCode(el.value); }).filter(Boolean);
+    if (!selected.length) { toast("请先勾选股票"); return; }
+    if (activeListId === "pool") {
+      state.pool = state.pool.filter(function (item) { return selected.indexOf(item.code) < 0; });
+      state.lists.forEach(function (list) {
+        list.items = list.items.filter(function (code) { return selected.indexOf(code) < 0; });
+      });
+    } else {
+      const list = findList(activeListId);
+      if (list) list.items = list.items.filter(function (code) { return selected.indexOf(code) < 0; });
+    }
+    saveLocal();
+    renderWatchlists();
+    toast("已移除选中股票");
+  });
+
+  $("renameListBtn").addEventListener("click", function () {
+    const list = findList(activeListId);
+    if (!list) { toast("总股票池不能重命名"); return; }
+    const name = prompt("新的列表名称", list.name);
+    if (!name || !name.trim()) return;
+    list.name = name.trim();
+    saveLocal();
+    renderWatchlists();
+    toast("已重命名");
+  });
+
+  $("deleteListBtn").addEventListener("click", function () {
+    const list = findList(activeListId);
+    if (!list) { toast("总股票池不能删除"); return; }
+    if (!confirm("删除列表「" + list.name + "」？股票仍保留在总股票池。")) return;
+    state.lists = state.lists.filter(function (l) { return l.id !== list.id; });
+    state.lists.forEach(function (l) { if (l.parentId === list.id) l.parentId = ""; });
+    activeListId = "pool";
+    saveLocal();
+    renderWatchlists();
+    toast("已删除列表");
+  });
+
+  $("noteDate").addEventListener("change", function () {
+    activeNoteDate = this.value || localDateStr();
+    renderWatchlists();
+  });
+
+  $("todayNoteBtn").addEventListener("click", function () {
+    activeNoteDate = localDateStr();
+    $("noteDate").value = activeNoteDate;
+    renderWatchlists();
+  });
 
   $("saveBtn").addEventListener("click", function () {
     syncStateFromForm();
@@ -1284,10 +1682,7 @@ function tryImport() {
     try {
       const d = decodeData(ms[1]);
       if (!d || !d.boardId) throw new Error("bad seed");
-      state.cash = Number(d.cash) || 0;
-      state.rows = (Array.isArray(d.rows) ? d.rows : []).map(function (r) {
-        return { code: normalizeCode(r.code), name: r.name || "", cost: Number(r.cost) || 0, qty: Number(r.qty) || 0 };
-      }).filter(function (r) { return !!r.code; });
+      applyBoardData(d);
       boardMeta = { boardId: d.boardId, objectId: d.objectId || null };
       saveBoardMeta();
       saveLocal();
@@ -1306,10 +1701,7 @@ function tryImport() {
       const json = await resp.json();
       const obj = (json.results && json.results[0]) || null;
       if (!obj) { toast("未找到该看板的云端数据"); return; }
-      state.cash = Number(obj.cash) || 0;
-      state.rows = (Array.isArray(obj.rows) ? obj.rows : []).map(function (r) {
-        return { code: normalizeCode(r.code), name: r.name || "", cost: Number(r.cost) || 0, qty: Number(r.qty) || 0 };
-      }).filter(function (r) { return !!r.code; });
+      applyBoardData(obj);
       boardMeta = { boardId: mi[1], objectId: obj.objectId || null };
       saveBoardMeta();
       saveLocal();
