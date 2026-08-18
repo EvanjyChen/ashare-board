@@ -117,7 +117,7 @@
   .card-note { margin-top: 10px; display: grid; gap: 6px; }
   .card-note-read { margin-top: 10px; color: var(--text-2); font-size: 12px; display: grid; gap: 4px; }
   .day-summary {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+    display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;
     border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 10px 0;
     background: var(--input-bg);
   }
@@ -1271,8 +1271,10 @@ function renderDaySummary(heldItems) {
   const s = summarizeDayPnl(heldItems);
   $("daySummary").innerHTML =
     '<div><div class="label">当日盈利合计</div><div class="v up">' + fmtSigned(s.profitAmount) + '</div></div>' +
+    '<div><div class="label">盈利股总市值</div><div class="v">' + fmt(s.profitValue) + '</div></div>' +
     '<div><div class="label">盈利股市值占比</div><div class="v up">' + (s.profitValue > 0 ? fmtSigned(s.profitAmount / s.profitValue * 100) + "%" : "--") + '</div></div>' +
     '<div><div class="label">当日亏损合计</div><div class="v down">' + fmtSigned(s.lossAmount) + '</div></div>' +
+    '<div><div class="label">亏损股总市值</div><div class="v">' + fmt(s.lossValue) + '</div></div>' +
     '<div><div class="label">亏损股市值占比</div><div class="v down">' + (s.lossValue > 0 ? fmtSigned(s.lossAmount / s.lossValue * 100) + "%" : "--") + '</div></div>';
 }
 
