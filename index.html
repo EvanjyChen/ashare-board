@@ -116,6 +116,16 @@
   }
   .card-note { margin-top: 10px; display: grid; gap: 6px; }
   .card-note-read { margin-top: 10px; color: var(--text-2); font-size: 12px; display: grid; gap: 4px; }
+  .day-summary {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 10px 0;
+    background: var(--input-bg);
+  }
+  .day-summary .label { font-size: 11px; color: var(--text-2); }
+  .day-summary .v { font-size: 15px; font-weight: 700; margin-top: 2px; }
+  .stock-section { margin-top: 12px; }
+  .stock-section-head { display: flex; justify-content: space-between; align-items: center; margin: 0 0 8px; }
+  .stock-section-head h3 { margin: 0; font-size: 15px; }
 
   /* ============ 编辑区 ============ */
   .row-item { display: grid; grid-template-columns: 1.2fr 1fr .9fr .8fr 36px; gap: 6px; margin-bottom: 8px; align-items: center; }
@@ -170,7 +180,7 @@
   .list-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
   .muted { color: var(--text-2); }
   @media (max-width: 380px) {
-    .compact-form.three, .list-tools, .view-controls { grid-template-columns: 1fr; }
+    .compact-form.three, .list-tools, .view-controls, .day-summary { grid-template-columns: 1fr; }
   }
   @media (max-width: 640px) {
     .container { max-width: 480px; }
@@ -293,9 +303,17 @@
         <option value="pct_desc">涨幅高到低</option>
         <option value="pct_asc">涨幅低到高</option>
         <option value="value_desc">市值高到低</option>
-        <option value="pnl_desc">盈亏高到低</option>
+        <option value="pnl_desc">累计盈亏高到低</option>
+        <option value="pnl_asc">累计盈亏低到高</option>
+        <option value="pnl_pct_desc">累计盈亏率高到低</option>
+        <option value="pnl_pct_asc">累计盈亏率低到高</option>
+        <option value="day_pnl_desc">当日盈亏高到低</option>
+        <option value="day_pnl_asc">当日盈亏低到高</option>
+        <option value="day_pct_desc">当日盈亏率高到低</option>
+        <option value="day_pct_asc">当日盈亏率低到高</option>
       </select>
     </div>
+    <div id="daySummary" class="day-summary"></div>
     <div class="compact-form">
       <input type="date" id="noteDate">
       <button class="btn btn-ghost" id="todayNoteBtn">今天</button>
@@ -1059,10 +1077,11 @@ function calc() {
     const pnl = price !== null ? (price - r.cost) * r.qty : null;           // 个股盈亏
     const pnlPct = (price !== null && r.cost > 0) ? (price - r.cost) / r.cost * 100 : null;
     const dayPnl = (q && q.prevClose) ? (q.price - q.prevClose) * r.qty : null; // 个股今日盈亏
+    const dayPnlPct = (q && q.prevClose) ? (q.price - q.prevClose) / q.prevClose * 100 : null;
     if (value !== null) stockValue += value;
     stockCost += cost;
     if (dayPnl !== null) { todayPnl += dayPnl; todayKnown = true; }
-    return { row: r, q: q, price: price, value: value, cost: cost, pnl: pnl, pnlPct: pnlPct, dayPnl: dayPnl };
+    return { row: r, q: q, price: price, value: value, cost: cost, pnl: pnl, pnlPct: pnlPct, dayPnl: dayPnl, dayPnlPct: dayPnlPct };
   });
   const totalPnl = stockValue - stockCost;                        // 累计总盈亏（现金不计入）
   const totalPnlPct = stockCost > 0 ? totalPnl / stockCost * 100 : null;
@@ -1168,11 +1187,34 @@ function renderWatchlists() {
   $("watchCount").textContent = rows.filtered.length + " / " + rows.total + " 只";
   $("watchEmpty").hidden = rows.filtered.length > 0;
   $("loadingTip").hidden = firstQuoteLoaded || rows.total === 0;
+  renderDaySummary(rows.held);
 
   const wrap = $("watchItems");
-  wrap.className = "stock-grid";
+  wrap.className = "";
   wrap.innerHTML = "";
-  rows.filtered.forEach(function (item) {
+  renderStockSection(wrap, "持仓个股", rows.held);
+  renderStockSection(wrap, "未买个股", rows.watch);
+
+  if (MODE === "edit") {
+    wrap.querySelectorAll(".plan-input,.review-input").forEach(function (ta) {
+      ta.addEventListener("input", function () {
+        const code = normalizeCode(this.getAttribute("data-code"));
+        const n = noteFor(code, noteDate);
+        if (this.classList.contains("plan-input")) n.plan = this.value;
+        if (this.classList.contains("review-input")) n.review = this.value;
+        saveLocal();
+      });
+    });
+  }
+}
+
+function renderStockSection(parent, title, items) {
+  const section = document.createElement("div");
+  section.className = "stock-section";
+  section.innerHTML = '<div class="stock-section-head"><h3>' + escapeHtml(title) + '</h3><span class="muted">' + items.length + ' 只</span></div>';
+  const grid = document.createElement("div");
+  grid.className = "stock-grid";
+  items.forEach(function (item) {
     const q = item.q;
     const note = item.note;
     const card = document.createElement("div");
@@ -1194,10 +1236,14 @@ function renderWatchlists() {
           (q && q.changePct !== null ? fmtSigned(q.changePct) + "%" : "--") + '</div></div>' +
         '<div><div class="label">成本价 / 数量</div><div class="v">' + (item.held ? fmt(item.cost) + " / " + fmt(item.qty, 0) : "--") + '</div></div>' +
         '<div><div class="label">市值</div><div class="v">' + (item.value !== null ? fmt(item.value) : "--") + '</div></div>' +
-        '<div><div class="label">持仓盈亏</div><div class="v ' + pnlClass(item.pnl) + '">' +
+        '<div><div class="label">累计盈亏</div><div class="v ' + pnlClass(item.pnl) + '">' +
           (item.pnl !== null ? fmtSigned(item.pnl) : "--") + '</div></div>' +
-        '<div><div class="label">盈亏比例</div><div class="v ' + pnlClass(item.pnlPct) + '">' +
+        '<div><div class="label">累计盈亏率</div><div class="v ' + pnlClass(item.pnlPct) + '">' +
           (item.pnlPct !== null ? fmtSigned(item.pnlPct) + "%" : "--") + '</div></div>' +
+        '<div><div class="label">当日盈亏</div><div class="v ' + pnlClass(item.dayPnl) + '">' +
+          (item.dayPnl !== null ? fmtSigned(item.dayPnl) : "--") + '</div></div>' +
+        '<div><div class="label">当日盈亏率</div><div class="v ' + pnlClass(item.dayPnlPct) + '">' +
+          (item.dayPnlPct !== null ? fmtSigned(item.dayPnlPct) + "%" : "--") + '</div></div>' +
       '</div>';
     if (MODE === "edit") {
       const box = document.createElement("div");
@@ -1215,20 +1261,33 @@ function renderWatchlists() {
         (note.review ? '<div><b>复盘：</b>' + escapeHtml(note.review) + '</div>' : "");
       card.appendChild(read);
     }
-    wrap.appendChild(card);
+    grid.appendChild(card);
   });
+  section.appendChild(grid);
+  parent.appendChild(section);
+}
 
-  if (MODE === "edit") {
-    wrap.querySelectorAll(".plan-input,.review-input").forEach(function (ta) {
-      ta.addEventListener("input", function () {
-        const code = normalizeCode(this.getAttribute("data-code"));
-        const n = noteFor(code, noteDate);
-        if (this.classList.contains("plan-input")) n.plan = this.value;
-        if (this.classList.contains("review-input")) n.review = this.value;
-        saveLocal();
-      });
-    });
-  }
+function renderDaySummary(heldItems) {
+  const s = summarizeDayPnl(heldItems);
+  $("daySummary").innerHTML =
+    '<div><div class="label">当日盈利合计</div><div class="v up">' + fmtSigned(s.profitAmount) + '</div></div>' +
+    '<div><div class="label">盈利股市值占比</div><div class="v up">' + (s.profitValue > 0 ? fmtSigned(s.profitAmount / s.profitValue * 100) + "%" : "--") + '</div></div>' +
+    '<div><div class="label">当日亏损合计</div><div class="v down">' + fmtSigned(s.lossAmount) + '</div></div>' +
+    '<div><div class="label">亏损股市值占比</div><div class="v down">' + (s.lossValue > 0 ? fmtSigned(s.lossAmount / s.lossValue * 100) + "%" : "--") + '</div></div>';
+}
+
+function summarizeDayPnl(items) {
+  return items.reduce(function (acc, item) {
+    if (item.dayPnl === null || item.value === null) return acc;
+    if (item.dayPnl > 0) {
+      acc.profitAmount += item.dayPnl;
+      acc.profitValue += item.value;
+    } else if (item.dayPnl < 0) {
+      acc.lossAmount += item.dayPnl;
+      acc.lossValue += item.value;
+    }
+    return acc;
+  }, { profitAmount: 0, profitValue: 0, lossAmount: 0, lossValue: 0 });
 }
 
 function getStockTags(code) {
@@ -1272,6 +1331,8 @@ function buildStockCards(noteDate) {
       value: it ? it.value : null,
       pnl: it ? it.pnl : null,
       pnlPct: it ? it.pnlPct : null,
+      dayPnl: it ? it.dayPnl : null,
+      dayPnlPct: it ? it.dayPnlPct : null,
       weight: (it && it.value !== null && c.stockValue > 0) ? it.value / c.stockValue * 100 : 0,
       changePct: (q && q.changePct !== null && q.changePct !== undefined) ? q.changePct : null
     });
@@ -1290,6 +1351,8 @@ function buildStockCards(noteDate) {
       value: it.value,
       pnl: it.pnl,
       pnlPct: it.pnlPct,
+      dayPnl: it.dayPnl,
+      dayPnlPct: it.dayPnlPct,
       weight: (it.value !== null && c.stockValue > 0) ? it.value / c.stockValue * 100 : 0,
       changePct: it.q && it.q.changePct
     });
@@ -1306,7 +1369,12 @@ function buildStockCards(noteDate) {
     return hay.indexOf(term) >= 0;
   });
   filtered.sort(compareStockCards);
-  return { total: rows.length, filtered: filtered };
+  return {
+    total: rows.length,
+    filtered: filtered,
+    held: filtered.filter(function (item) { return item.held; }),
+    watch: filtered.filter(function (item) { return !item.held; })
+  };
 }
 
 function numForSort(n, fallback) {
@@ -1320,6 +1388,13 @@ function compareStockCards(a, b) {
   if (sortKey === "pct_asc") return numForSort(a.changePct, Infinity) - numForSort(b.changePct, Infinity);
   if (sortKey === "value_desc") return numForSort(b.value, -Infinity) - numForSort(a.value, -Infinity);
   if (sortKey === "pnl_desc") return numForSort(b.pnl, -Infinity) - numForSort(a.pnl, -Infinity);
+  if (sortKey === "pnl_asc") return numForSort(a.pnl, Infinity) - numForSort(b.pnl, Infinity);
+  if (sortKey === "pnl_pct_desc") return numForSort(b.pnlPct, -Infinity) - numForSort(a.pnlPct, -Infinity);
+  if (sortKey === "pnl_pct_asc") return numForSort(a.pnlPct, Infinity) - numForSort(b.pnlPct, Infinity);
+  if (sortKey === "day_pnl_desc") return numForSort(b.dayPnl, -Infinity) - numForSort(a.dayPnl, -Infinity);
+  if (sortKey === "day_pnl_asc") return numForSort(a.dayPnl, Infinity) - numForSort(b.dayPnl, Infinity);
+  if (sortKey === "day_pct_desc") return numForSort(b.dayPnlPct, -Infinity) - numForSort(a.dayPnlPct, -Infinity);
+  if (sortKey === "day_pct_asc") return numForSort(a.dayPnlPct, Infinity) - numForSort(b.dayPnlPct, Infinity);
   if (a.held !== b.held) return a.held ? -1 : 1;
   return numForSort(b.value, -Infinity) - numForSort(a.value, -Infinity);
 }
