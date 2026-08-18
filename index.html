@@ -346,15 +346,16 @@
       <div class="compact-form three">
         <input type="text" id="watchCode" placeholder="代码 600519" inputmode="numeric" maxlength="9" autocapitalize="off" autocorrect="off">
         <input type="text" id="watchName" placeholder="名称(可空)">
-        <button class="btn btn-ghost" id="addWatchStockBtn">加入当前标签</button>
+        <button class="btn btn-ghost" id="addWatchStockBtn">加入股票池</button>
       </div>
       <div class="list-tools">
         <select id="moveTarget"></select>
         <button class="btn btn-primary" id="moveSelectedBtn">批量转移标签</button>
         <button class="btn btn-ghost" id="renameListBtn">重命名标签</button>
-        <button class="btn btn-ghost" id="removeSelectedBtn">移除选中</button>
+        <button class="btn btn-ghost" id="removeSelectedBtn">调出股票池</button>
         <button class="btn btn-ghost" id="deleteListBtn">删除标签</button>
       </div>
+      <div class="hint">持仓个股会自动进入股票池；清仓后保留在股票池并显示为观察。</div>
     </div>
     <div id="watchItems"></div>
     <div class="empty" id="watchEmpty" hidden>暂无匹配股票。</div>
@@ -1185,6 +1186,8 @@ function renderWatchlists() {
   renderListSelectOptions($("moveTarget"), true);
   const moveTarget = $("moveTarget");
   if (moveTarget) moveTarget.value = activeListId === "pool" ? (state.lists[0] ? state.lists[0].id : "pool") : "pool";
+  if ($("addWatchStockBtn")) $("addWatchStockBtn").textContent = activeListId === "pool" ? "加入股票池" : "加入当前标签";
+  if ($("removeSelectedBtn")) $("removeSelectedBtn").textContent = activeListId === "pool" ? "调出股票池" : "移出当前标签";
 
   const tabs = $("listTabs");
   tabs.innerHTML = "";
@@ -1723,13 +1726,17 @@ function bindEvents() {
     const code = normalizeCode($("watchCode").value);
     const name = $("watchName").value.trim();
     if (!code) { toast("请输入 6 位股票代码"); return; }
-    addCodeToList(activeListId, code, name);
+    if (activeListId === "pool") {
+      upsertPoolStock(code, name);
+    } else {
+      addCodeToList(activeListId, code, name);
+    }
     $("watchCode").value = "";
     $("watchName").value = "";
     saveLocal();
     refreshQuotes();
     renderWatchlists();
-    toast("已加入当前标签");
+    toast(activeListId === "pool" ? "已加入股票池" : "已加入当前标签");
   });
 
   $("watchCode").addEventListener("blur", function () {
@@ -1760,17 +1767,23 @@ function bindEvents() {
     const selected = Array.from(document.querySelectorAll(".watch-check:checked")).map(function (el) { return normalizeCode(el.value); }).filter(Boolean);
     if (!selected.length) { toast("请先勾选股票"); return; }
     if (activeListId === "pool") {
-      state.pool = state.pool.filter(function (item) { return selected.indexOf(item.code) < 0; });
+      const heldCodes = {};
+      state.rows.forEach(function (r) { if (r.code && r.qty > 0) heldCodes[r.code] = true; });
+      const blocked = selected.filter(function (code) { return heldCodes[code]; });
+      const removable = selected.filter(function (code) { return !heldCodes[code]; });
+      state.pool = state.pool.filter(function (item) { return removable.indexOf(item.code) < 0; });
       state.lists.forEach(function (list) {
-        list.items = list.items.filter(function (code) { return selected.indexOf(code) < 0; });
+        list.items = list.items.filter(function (code) { return removable.indexOf(code) < 0; });
       });
+      if (blocked.length) toast("持仓股不能调出股票池，已保留 " + blocked.length + " 只");
+      else toast("已调出股票池");
     } else {
       const list = findList(activeListId);
       if (list) list.items = list.items.filter(function (code) { return selected.indexOf(code) < 0; });
+      toast("已移出当前标签");
     }
     saveLocal();
     renderWatchlists();
-    toast("已移除选中股票");
   });
 
   $("renameListBtn").addEventListener("click", function () {
