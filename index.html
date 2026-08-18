@@ -105,7 +105,7 @@
   .holding-grid .label { font-size: 11px; color: var(--text-2); }
   .holding-grid .v { font-size: 15px; font-weight: 600; }
   .holding-grid .v.big { font-size: 17px; }
-  .stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; align-items: start; }
+  .stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; align-items: start; }
   .stock-card { margin-bottom: 0; }
   .stock-card-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; margin-bottom: 10px; }
   .stock-tags { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
@@ -117,7 +117,7 @@
   .card-note { margin-top: 10px; display: grid; gap: 6px; }
   .card-note-read { margin-top: 10px; color: var(--text-2); font-size: 12px; display: grid; gap: 4px; }
   .day-summary {
-    display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px;
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px;
     border: 1px solid var(--border); border-radius: 8px; padding: 10px; margin: 10px 0;
     background: var(--input-bg);
   }
@@ -179,16 +179,36 @@
   .view-controls { display: grid; grid-template-columns: 1.4fr .9fr .9fr; gap: 6px; margin: 10px 0; }
   .list-tools { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 10px 0; }
   .muted { color: var(--text-2); }
-  @media (max-width: 380px) {
-    .compact-form.three, .list-tools, .view-controls, .day-summary { grid-template-columns: 1fr; }
-  }
   @media (max-width: 640px) {
-    .container { max-width: 480px; }
+    .container { max-width: 480px; padding: 8px 8px 28px; }
+    .card { border-radius: 10px; padding: 12px; margin-bottom: 10px; }
+    .overview { border-radius: 12px; padding: 16px 12px; }
+    .overview .total-value { font-size: 30px; }
+    .overview .grid { gap: 8px; }
+    .holding-grid { gap: 7px 8px; }
+    .holding-grid .v { font-size: 14px; }
+    .holding-grid .v.big { font-size: 16px; }
+    .stock-card-top { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+    .weight-wrap { justify-content: flex-start; }
     .stock-grid { grid-template-columns: 1fr; }
+    .day-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 8px; gap: 6px; }
+    .day-summary .v { font-size: 14px; word-break: break-word; }
+    .btn { padding: 9px 10px; font-size: 14px; }
+    .btn-row { flex-direction: column; }
+    .list-tab { padding: 7px 9px; }
+    .section-title { align-items: flex-start; }
+    .section-title h2 { font-size: 15px; }
+  }
+  @media (max-width: 380px) {
+    .compact-form, .compact-form.three, .list-tools, .view-controls { grid-template-columns: 1fr; }
+    .day-summary { grid-template-columns: 1fr; }
+    .row-item { grid-template-columns: 1fr 1fr 1fr 32px; }
+    .row-head span:nth-child(2), .row-item .r-name { display: none; }
   }
   @media (min-width: 760px) {
     .overview .grid { grid-template-columns: repeat(6, 1fr); }
     .overview .total-value { font-size: 40px; }
+    .day-summary { grid-template-columns: repeat(6, 1fr); }
   }
 
   /* ============ Toast 轻提示 ============ */
