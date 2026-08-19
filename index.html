@@ -515,9 +515,7 @@ function loadLocal() {
       if (d && Array.isArray(d.rows)) {
         state.cash = Number(d.cash) || 0;
         // 兼容旧数据：统一规范为内部带前缀代码
-        state.rows = d.rows.map(function (r) {
-          return { code: normalizeCode(r.code), name: r.name || "", cost: Number(r.cost) || 0, qty: Number(r.qty) || 0 };
-        }).filter(function (r) { return !!r.code; });
+        state.rows = d.rows.map(normalizeHoldingRow).filter(function (r) { return !!r.code; });
         state.lists = Array.isArray(d.lists) ? d.lists.map(normalizeList).filter(Boolean) : [];
         state.pool = Array.isArray(d.pool) ? d.pool.map(normalizeStockItem).filter(Boolean) : [];
         state.notes = (d.notes && typeof d.notes === "object") ? d.notes : {};
@@ -535,6 +533,32 @@ function normalizeStockItem(item) {
   const code = normalizeCode(item && item.code);
   if (!code) return null;
   return { code: code, name: (item && item.name) || "" };
+}
+
+function normalizeDateAmountMap(map) {
+  const out = {};
+  if (!map || typeof map !== "object") return out;
+  Object.keys(map).forEach(function (date) {
+    const v = map[date];
+    if (typeof v === "number") out[date] = v;
+    else if (v && typeof v === "object") out[date] = Number(v.pnl || v.amount || 0) || 0;
+  });
+  return out;
+}
+
+function normalizeHoldingRow(r) {
+  const code = normalizeCode(r && r.code);
+  if (!code) return { code: "", name: "", cost: 0, qty: 0, realizedPnl: 0, realizedCost: 0, realizedByDate: {}, realizedValueByDate: {} };
+  return {
+    code: code,
+    name: r.name || "",
+    cost: Number(r.cost) || 0,
+    qty: Number(r.qty) || 0,
+    realizedPnl: Number(r.realizedPnl) || 0,
+    realizedCost: Number(r.realizedCost) || 0,
+    realizedByDate: normalizeDateAmountMap(r.realizedByDate),
+    realizedValueByDate: normalizeDateAmountMap(r.realizedValueByDate)
+  };
 }
 
 function normalizeList(list) {
@@ -561,6 +585,7 @@ function ensureStateShape() {
   if (!Array.isArray(state.pool)) state.pool = [];
   if (!state.notes || typeof state.notes !== "object") state.notes = {};
   const poolSeen = {};
+  state.rows = state.rows.map(normalizeHoldingRow).filter(function (r) { return !!r.code; });
   state.pool = state.pool.map(normalizeStockItem).filter(function (item) {
     if (!item || poolSeen[item.code]) return false;
     poolSeen[item.code] = true;
@@ -628,9 +653,7 @@ function noteFor(code, date) {
 
 function applyBoardData(d) {
   state.cash = Number(d && d.cash) || 0;
-  state.rows = (d && Array.isArray(d.rows) ? d.rows : []).map(function (r) {
-    return { code: normalizeCode(r.code), name: r.name || "", cost: Number(r.cost) || 0, qty: Number(r.qty) || 0 };
-  }).filter(function (r) { return !!r.code; });
+  state.rows = (d && Array.isArray(d.rows) ? d.rows : []).map(normalizeHoldingRow).filter(function (r) { return !!r.code; });
   state.lists = (d && Array.isArray(d.lists) ? d.lists : []).map(normalizeList).filter(Boolean);
   state.pool = (d && Array.isArray(d.pool) ? d.pool : []).map(normalizeStockItem).filter(Boolean);
   state.notes = (d && d.notes && typeof d.notes === "object") ? d.notes : {};
@@ -760,23 +783,38 @@ function addRow(data) {
 // 表单 -> state（过滤无效代码行；输入的 6 位数字自动加沪深前缀）
 function syncStateFromForm() {
   const list = [];
+  const oldByCode = {};
+  state.rows.forEach(function (r) { if (r.code) oldByCode[r.code] = r; });
+  const activeCodes = {};
   $("rows").querySelectorAll(".row-item").forEach(function (div) {
     const code = normalizeCode(div.querySelector(".r-code").value);
     if (!code) return;
+    const old = oldByCode[code] || {};
+    activeCodes[code] = true;
     list.push({
       code: code,
       name: div.querySelector(".r-name").value.trim(),
       cost: parseFloat(div.querySelector(".r-cost").value) || 0,
-      qty: parseFloat(div.querySelector(".r-qty").value) || 0
+      qty: parseFloat(div.querySelector(".r-qty").value) || 0,
+      realizedPnl: Number(old.realizedPnl) || 0,
+      realizedCost: Number(old.realizedCost) || 0,
+      realizedByDate: old.realizedByDate || {},
+      realizedValueByDate: old.realizedValueByDate || {}
     });
   });
-  state.rows = list;
+  state.rows.forEach(function (r) {
+    if (!activeCodes[r.code] && ((Number(r.qty) || 0) <= 0) && ((Number(r.realizedPnl) || 0) !== 0 || (Number(r.realizedCost) || 0) !== 0)) {
+      list.push(r);
+    }
+  });
+  state.rows = list.map(normalizeHoldingRow).filter(function (r) { return !!r.code; });
 }
 
 function renderForm() {
   $("rows").innerHTML = "";
-  state.rows.forEach(function (r) { addRow(r); });
-  if (state.rows.length === 0) addRow(); // 默认给一行空白
+  const activeRows = state.rows.filter(function (r) { return (Number(r.qty) || 0) > 0; });
+  activeRows.forEach(function (r) { addRow(r); });
+  if (activeRows.length === 0) addRow(); // 默认给一行空白
   renderCash();
 }
 
@@ -844,13 +882,22 @@ function doTrade(isBuy) {
     toast("已买入 " + codeDigits(code) + " × " + fmt(qty, 0) + "，扣款 " + fmt(amount));
   } else {
     if (!row || qty > row.qty) { toast("持仓不足，无法卖出"); return; }
+    const tradeDate = localDateStr();
+    const realized = Math.round((price - row.cost) * qty * 100) / 100;
+    const realizedCost = Math.round(row.cost * qty * 100) / 100;
+    row.realizedPnl = Math.round(((Number(row.realizedPnl) || 0) + realized) * 100) / 100;
+    row.realizedCost = Math.round(((Number(row.realizedCost) || 0) + realizedCost) * 100) / 100;
+    row.realizedByDate = row.realizedByDate || {};
+    row.realizedValueByDate = row.realizedValueByDate || {};
+    row.realizedByDate[tradeDate] = Math.round(((Number(row.realizedByDate[tradeDate]) || 0) + realized) * 100) / 100;
+    row.realizedValueByDate[tradeDate] = Math.round(((Number(row.realizedValueByDate[tradeDate]) || 0) + amount) * 100) / 100;
     state.cash = Math.round((state.cash + amount) * 100) / 100;
     row.qty -= qty;
-    if (row.qty <= 0) { // 清仓：移除该行
-      state.rows = state.rows.filter(function (r) { return r.code !== code; });
+    if (row.qty <= 0) { // 清仓：保留数量 0 的历史持仓，用于展示已实现盈亏
+      row.qty = 0;
     }
-    logTx({ type: "卖出", code: codeDigits(code), price: price, qty: qty, amount: amount });
-    toast("已卖出 " + codeDigits(code) + " × " + fmt(qty, 0) + "，回款 " + fmt(amount));
+    logTx({ type: "卖出", code: codeDigits(code), price: price, qty: qty, amount: amount, realizedPnl: realized });
+    toast("已卖出 " + codeDigits(code) + " × " + fmt(qty, 0) + "，回款 " + fmt(amount) + "，盈亏 " + fmtSigned(realized));
   }
   saveLocal();
   pushNow(); // 交易立即同步到云端看板
@@ -1090,21 +1137,31 @@ function calc() {
   let stockCost = 0;    // 股票总成本 = Σ(成本价 × 数量)
   let todayPnl = 0;     // 今日盈亏 = Σ((当前价 - 昨收) × 数量)
   let todayKnown = false;
+  const today = localDateStr();
   const items = state.rows.map(function (r) {
     const q = quotes[r.code];
     const price = q ? q.price : null;
-    const value = price !== null ? price * r.qty : null;
-    const cost = r.cost * r.qty;
-    const pnl = price !== null ? (price - r.cost) * r.qty : null;           // 个股盈亏
-    const pnlPct = (price !== null && r.cost > 0) ? (price - r.cost) / r.cost * 100 : null;
-    const dayPnl = (q && q.prevClose) ? (q.price - q.prevClose) * r.qty : null; // 个股今日盈亏
-    const dayPnlPct = (q && q.prevClose) ? (q.price - q.prevClose) / q.prevClose * 100 : null;
+    const qty = Number(r.qty) || 0;
+    const value = price !== null ? price * qty : (qty === 0 ? 0 : null);
+    const activeCost = r.cost * qty;
+    const realizedPnl = Number(r.realizedPnl) || 0;
+    const realizedCost = Number(r.realizedCost) || 0;
+    const realizedToday = Number(r.realizedByDate && r.realizedByDate[today]) || 0;
+    const realizedTodayValue = Number(r.realizedValueByDate && r.realizedValueByDate[today]) || 0;
+    const unrealizedPnl = price !== null ? (price - r.cost) * qty : (qty === 0 ? 0 : null);
+    const pnl = unrealizedPnl !== null ? realizedPnl + unrealizedPnl : (realizedPnl || null);
+    const pnlBase = activeCost + realizedCost;
+    const pnlPct = pnlBase > 0 && pnl !== null ? pnl / pnlBase * 100 : null;
+    const liveDayPnl = (q && q.prevClose && qty > 0) ? (q.price - q.prevClose) * qty : 0;
+    const dayPnl = (q && q.prevClose && qty > 0) || realizedToday ? liveDayPnl + realizedToday : null;
+    const dayValueBase = (value || 0) + realizedTodayValue;
+    const dayPnlPct = dayValueBase > 0 && dayPnl !== null ? dayPnl / dayValueBase * 100 : null;
     if (value !== null) stockValue += value;
-    stockCost += cost;
+    stockCost += pnlBase;
     if (dayPnl !== null) { todayPnl += dayPnl; todayKnown = true; }
-    return { row: r, q: q, price: price, value: value, cost: cost, pnl: pnl, pnlPct: pnlPct, dayPnl: dayPnl, dayPnlPct: dayPnlPct };
+    return { row: r, q: q, price: price, value: value, cost: activeCost, pnl: pnl, pnlPct: pnlPct, dayPnl: dayPnl, dayPnlPct: dayPnlPct, dayValueBase: dayValueBase, realizedPnl: realizedPnl };
   });
-  const totalPnl = stockValue - stockCost;                        // 累计总盈亏（现金不计入）
+  const totalPnl = items.reduce(function (sum, it) { return sum + (it.pnl || 0); }, 0); // 累计总盈亏 = 已实现 + 未实现
   const totalPnlPct = stockCost > 0 ? totalPnl / stockCost * 100 : null;
   return {
     items: items,
@@ -1210,7 +1267,7 @@ function renderWatchlists() {
   $("watchCount").textContent = rows.filtered.length + " / " + rows.total + " 只";
   $("watchEmpty").hidden = rows.filtered.length > 0;
   $("loadingTip").hidden = firstQuoteLoaded || rows.total === 0;
-  renderDaySummary(rows.held);
+  renderDaySummary(rows.filtered);
 
   const wrap = $("watchItems");
   wrap.className = "";
@@ -1257,7 +1314,7 @@ function renderStockSection(parent, title, items) {
           (item.price !== null ? fmt(item.price) : "--") + '</div></div>' +
         '<div><div class="label">日涨跌幅</div><div class="v big ' + pnlClass(q ? q.changePct : null) + '">' +
           (q && q.changePct !== null ? fmtSigned(q.changePct) + "%" : "--") + '</div></div>' +
-        '<div><div class="label">成本价 / 数量</div><div class="v">' + (item.held ? fmt(item.cost) + " / " + fmt(item.qty, 0) : "--") + '</div></div>' +
+        '<div><div class="label">成本价 / 数量</div><div class="v">' + (item.hasPositionRecord ? fmt(item.cost) + " / " + fmt(item.qty, 0) : "--") + '</div></div>' +
         '<div><div class="label">市值</div><div class="v">' + (item.value !== null ? fmt(item.value) : "--") + '</div></div>' +
         '<div><div class="label">累计盈亏</div><div class="v ' + pnlClass(item.pnl) + '">' +
           (item.pnl !== null ? fmtSigned(item.pnl) : "--") + '</div></div>' +
@@ -1303,13 +1360,13 @@ function renderDaySummary(heldItems) {
 
 function summarizeDayPnl(items) {
   return items.reduce(function (acc, item) {
-    if (item.dayPnl === null || item.value === null) return acc;
+    if (item.dayPnl === null) return acc;
     if (item.dayPnl > 0) {
       acc.profitAmount += item.dayPnl;
-      acc.profitValue += item.value;
+      acc.profitValue += item.dayValueBase || item.value || 0;
     } else if (item.dayPnl < 0) {
       acc.lossAmount += item.dayPnl;
-      acc.lossValue += item.value;
+      acc.lossValue += item.dayValueBase || item.value || 0;
     }
     return acc;
   }, { profitAmount: 0, profitValue: 0, lossAmount: 0, lossValue: 0 });
@@ -1350,6 +1407,7 @@ function buildStockCards(noteDate) {
       q: q,
       note: note,
       held: held,
+      hasPositionRecord: !!it,
       price: it ? it.price : (q ? q.price : null),
       qty: it ? it.row.qty : 0,
       cost: it ? it.row.cost : 0,
@@ -1358,6 +1416,7 @@ function buildStockCards(noteDate) {
       pnlPct: it ? it.pnlPct : null,
       dayPnl: it ? it.dayPnl : null,
       dayPnlPct: it ? it.dayPnlPct : null,
+      dayValueBase: it ? it.dayValueBase : 0,
       weight: (it && it.value !== null && c.stockValue > 0) ? it.value / c.stockValue * 100 : 0,
       changePct: (q && q.changePct !== null && q.changePct !== undefined) ? q.changePct : null
     });
@@ -1370,6 +1429,7 @@ function buildStockCards(noteDate) {
       q: it.q,
       note: (state.notes[it.row.code] && state.notes[it.row.code][noteDate]) || { plan: "", review: "" },
       held: it.row.qty > 0,
+      hasPositionRecord: true,
       price: it.price,
       qty: it.row.qty,
       cost: it.row.cost,
@@ -1378,6 +1438,7 @@ function buildStockCards(noteDate) {
       pnlPct: it.pnlPct,
       dayPnl: it.dayPnl,
       dayPnlPct: it.dayPnlPct,
+      dayValueBase: it.dayValueBase,
       weight: (it.value !== null && c.stockValue > 0) ? it.value / c.stockValue * 100 : 0,
       changePct: it.q && it.q.changePct
     });
