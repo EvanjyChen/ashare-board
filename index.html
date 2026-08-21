@@ -171,6 +171,7 @@
   .section-title h2 { font-size: 16px; margin: 0; }
   .compact-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 10px; }
   .compact-form.three { grid-template-columns: 1fr 1fr 1fr; }
+  .date-form { grid-template-columns: minmax(0, 1fr) 88px; gap: 12px; align-items: center; }
   select, textarea {
     width: 100%; border: 1px solid var(--border); border-radius: 8px;
     background: var(--input-bg); color: var(--text); outline: none;
@@ -205,9 +206,12 @@
     .list-tab { padding: 7px 9px; }
     .section-title { align-items: flex-start; }
     .section-title h2 { font-size: 15px; }
+    .date-form { grid-template-columns: minmax(0, 1fr) 76px; gap: 12px; }
+    .date-form .btn { min-height: 44px; padding-left: 8px; padding-right: 8px; }
   }
   @media (max-width: 380px) {
     .compact-form, .compact-form.three, .list-tools, .view-controls { grid-template-columns: 1fr; }
+    .date-form { grid-template-columns: 1fr; gap: 8px; }
     .day-summary { grid-template-columns: 1fr; }
     .row-item { grid-template-columns: 1fr 1fr 1fr 32px; }
     .row-head span:nth-child(2), .row-item .r-name { display: none; }
@@ -341,7 +345,7 @@
       </select>
     </div>
     <div id="daySummary" class="day-summary"></div>
-    <div class="compact-form">
+    <div class="compact-form date-form">
       <input type="date" id="noteDate">
       <button class="btn btn-ghost" id="todayNoteBtn">今天</button>
     </div>
