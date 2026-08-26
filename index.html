@@ -1620,7 +1620,7 @@ function deleteTrade(index) {
   }
   state.txs.splice(index, 1);
   try { localStorage.setItem(CONFIG.LS_TX, JSON.stringify(state.txs.slice(-500))); } catch (e) {}
-  saveLocal();
+  saveLocalOnly();
   pushNow();
   renderForm();
   renderAll();
@@ -2002,6 +2002,7 @@ async function doPushState() {
     }
     saveBoardCache(boardMeta.boardId, payload);
     pushRetryCount = 0; // 成功：重置重试计数
+    setSyncStatus("已同步到看板 " + boardMeta.boardId);
     pushing = false;
     pushAgain = false;
     return true;
@@ -2062,7 +2063,7 @@ async function pullState() {
  * =================================================================== */
 function makeShareLink() {
   syncStateFromForm();
-  saveLocal();
+  saveLocalOnly();
   const data = boardDataPayload();
   const base = location.href.split("#")[0];
   return base + "#data=" + encodeData(data);
