@@ -521,6 +521,11 @@ function saveLocal() {
   schedulePush(); // 每次本地变动后（防抖）自动同步到云端看板
 }
 
+function saveLocalOnly() {
+  ensureStateShape();
+  try { localStorage.setItem(CONFIG.LS_HOLDINGS, JSON.stringify(state)); } catch (e) {}
+}
+
 // 看板元信息持久化（编辑模式）：boardId 一旦生成不再变，链接永久有效
 function loadBoardMeta() {
   try {
@@ -592,8 +597,10 @@ async function bindCurrentDataToBoard(boardId, options) {
     return false;
   }
   MODE = "edit";
+  clearTimeout(pushTimer);
+  pushAgain = false;
   if (!options || options.syncForm !== false) syncStateFromForm();
-  saveLocal();
+  saveLocalOnly();
   boardMeta = { boardId: boardId, objectId: CONFIG.KNOWN_BOARD_OBJECT_IDS[boardId] || null };
   saveBoardMeta();
   if ($("modeBadge")) $("modeBadge").textContent = "编辑模式 · " + boardMeta.boardId;
@@ -612,8 +619,10 @@ async function syncCurrentBoard() {
     toast("请先绑定看板 ID");
     return;
   }
+  clearTimeout(pushTimer);
+  pushAgain = false;
   syncStateFromForm();
-  saveLocal();
+  saveLocalOnly();
   setSyncStatus("正在同步到看板 " + boardMeta.boardId + "...");
   const ok = await pushState();
   if (ok) {
@@ -1935,8 +1944,7 @@ function pushNow() {
 }
 async function pushState() {
   if (pushing) {
-    pushAgain = true;
-    setSyncStatus("已有同步正在进行，已排队补发。");
+    setSyncStatus("已有同步正在进行，正在等待完成。");
     return pushPromise || false;
   }
   pushing = true;
@@ -1990,10 +1998,7 @@ async function doPushState() {
     saveBoardCache(boardMeta.boardId, payload);
     pushRetryCount = 0; // 成功：重置重试计数
     pushing = false;
-    if (pushAgain) {
-      pushAgain = false;
-      return pushState();
-    }
+    pushAgain = false;
     return true;
   } catch (e) {
     const msg = "云端同步失败：" + ((e && e.message) || "网络错误");
@@ -2005,10 +2010,7 @@ async function doPushState() {
       setTimeout(function () { if (MODE === "edit") pushState(); }, 10000 * pushRetryCount);
     }
     pushing = false;
-    if (pushAgain) {
-      pushAgain = false;
-      return pushState();
-    }
+    pushAgain = false;
     return false;
   }
 }
