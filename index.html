@@ -1934,7 +1934,7 @@ function genBoardId() {
   return s;
 }
 
-/* ---- 编辑端：推送（防抖 0.8s；推送中又有变动则补发一次；失败指数退避重试） ---- */
+/* ---- 编辑端：推送（防抖 0.8s；交易/手动同步立即推送） ---- */
 let pushTimer = null, pushing = false, pushAgain = false, pushRetryCount = 0, pushPromise = null;
 function schedulePush() {
   if (MODE !== "edit" || !syncConfigured() || !boardMeta || !boardMeta.boardId) return;
@@ -1960,6 +1960,11 @@ async function pushState() {
 }
 
 async function doPushState() {
+  const knownObjectId = CONFIG.KNOWN_BOARD_OBJECT_IDS[boardMeta.boardId];
+  if (!boardMeta.objectId && knownObjectId) {
+    boardMeta.objectId = knownObjectId;
+    saveBoardMeta();
+  }
   // 注意：不要用 updatedAt/createdAt/objectId 作为自定义字段名（两家都保留）
   const payload = Object.assign({
     boardId: boardMeta.boardId,
@@ -2010,11 +2015,7 @@ async function doPushState() {
     const msg = "云端同步失败：" + ((e && e.message) || "网络错误");
     setSyncStatus(msg);
     throttledToast("syncFail", msg);
-    // 失败自动重试（10s/20s/30s/40s/50s 指数退避，最多 5 次）
-    if (pushRetryCount < 5) {
-      pushRetryCount++;
-      setTimeout(function () { if (MODE === "edit") pushState(); }, 10000 * pushRetryCount);
-    }
+    pushRetryCount = 0;
     pushing = false;
     pushAgain = false;
     return false;
