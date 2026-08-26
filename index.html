@@ -472,6 +472,7 @@ let activeNoteDate = "";
 let filterText = "";
 let filterStatus = "all";
 let sortKey = "held";
+let suppressAutoPush = false;
 
 /* =====================================================================
  * 工具函数
@@ -518,7 +519,7 @@ function decodeData(str) {
 function saveLocal() {
   ensureStateShape();
   try { localStorage.setItem(CONFIG.LS_HOLDINGS, JSON.stringify(state)); } catch (e) {}
-  schedulePush(); // 每次本地变动后（防抖）自动同步到云端看板
+  if (!suppressAutoPush) schedulePush(); // 每次本地变动后（防抖）自动同步到云端看板
 }
 
 function saveLocalOnly() {
@@ -531,6 +532,10 @@ function loadBoardMeta() {
   try {
     const raw = localStorage.getItem(CONFIG.LS_BOARD);
     boardMeta = raw ? JSON.parse(raw) : null;
+    if (boardMeta && boardMeta.boardId && !boardMeta.objectId && CONFIG.KNOWN_BOARD_OBJECT_IDS[boardMeta.boardId]) {
+      boardMeta.objectId = CONFIG.KNOWN_BOARD_OBJECT_IDS[boardMeta.boardId];
+      saveBoardMeta();
+    }
   } catch (e) { boardMeta = null; }
 }
 function saveBoardMeta() {
@@ -1028,7 +1033,7 @@ function doTransfer(dir) {
   if (dir < 0 && amt > state.cash) { toast("现金不足，无法转出"); return; }
   state.cash = Math.round((state.cash + dir * amt) * 100) / 100;
   logTx({ type: dir > 0 ? "转入" : "转出", amount: amt });
-  saveLocal();
+  saveLocalOnly();
   pushNow(); // 交易立即同步到云端看板
   $("transferAmount").value = "";
   renderCash();
@@ -1080,7 +1085,7 @@ function doTrade(isBuy) {
     logTx({ type: "卖出", code: codeDigits(code), price: price, qty: qty, amount: amount, realizedPnl: realized, time: txTime });
     toast("已卖出 " + codeDigits(code) + " × " + fmt(qty, 0) + "，回款 " + fmt(amount) + "，盈亏 " + fmtSigned(realized));
   }
-  saveLocal();
+  saveLocalOnly();
   pushNow(); // 交易立即同步到云端看板
   renderForm();    // 同步上方持仓表单
   renderAll();
@@ -1307,7 +1312,7 @@ function autoFillNames() {
     if (item.code && !item.name && quotes[item.code] && quotes[item.code].name) item.name = quotes[item.code].name;
   });
   syncStateFromForm();
-  saveLocal();
+  saveLocalOnly();
 }
 
 /* =====================================================================
@@ -2382,6 +2387,7 @@ function tryImport() {
 }
 
 function init() {
+  suppressAutoPush = true;
   initTheme();
   if (tryImport()) return; // #import= 导入流程接管
   initMode();
@@ -2390,6 +2396,7 @@ function init() {
   if (MODE === "edit") renderForm();
   renderAll();
   renderHistory();
+  suppressAutoPush = false;
   refreshQuotes(); // 首次打开总是拉一次（非交易时间也能看到最新收盘价）
   // 定时刷新仅交易时段生效；非交易时间只有手动添加股票/保存时才触发刷新
   refreshTimer = setInterval(function () {
