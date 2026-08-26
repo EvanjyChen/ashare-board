@@ -442,7 +442,7 @@ const CONFIG = {
   LS_TX: "ashare_tx_v1",              // localStorage：交易流水 key
   LS_BOARD: "ashare_board_v1",        // localStorage：看板 ID/云端 objectId
   LS_BOARD_CACHE: "ashare_board_cache_v1", // localStorage：看板模式最近一次成功拉取缓存
-  LS_PULL_BACKOFF: "ashare_pull_backoff_v1", // localStorage：看板拉取限流退避截止时间
+  LS_PULL_BACKOFF: "ashare_pull_backoff_v2", // localStorage：看板拉取限流退避截止时间
   LS_SNAPSHOTS: "ashare_snapshots_v1",// localStorage：历史净值快照 key
   LS_THEME: "ashare_theme",           // localStorage：主题 key
   SNAPSHOT_HOUR: 15,                  // 每日快照时间：15:30 之后
@@ -1961,8 +1961,8 @@ async function pullState() {
     refreshQuotes(); // 持仓可能变化，立即拉价
   } catch (e) {
     if (e && e.code === 10210) {
-      savePullBackoff(Date.now() + 30 * 60 * 1000);
-      throttledToast("pullLimit", "看板同步接口请求过多，约半小时后自动恢复");
+      savePullBackoff(Date.now() + 5 * 60 * 1000);
+      throttledToast("pullLimit", "看板同步接口请求过多，约 5 分钟后自动重试");
     } else {
       throttledToast("pullFail", "看板数据拉取失败：" + ((e && e.message) || "网络错误"));
     }
