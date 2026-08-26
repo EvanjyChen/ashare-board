@@ -405,6 +405,8 @@
   </div>
 
   <div class="footer-link" id="boardFooter" hidden>
+    <a href="#" id="editBoardLink">编辑这个看板</a>
+    <span> · </span>
     <a href="#" id="makeMineLink">✏️ 创建我自己的看板</a>
   </div>
 </div>
@@ -522,6 +524,19 @@ function loadBoardMeta() {
 }
 function saveBoardMeta() {
   try { localStorage.setItem(CONFIG.LS_BOARD, JSON.stringify(boardMeta)); } catch (e) {}
+}
+
+function setPendingToast(msg) {
+  try { sessionStorage.setItem("ashare_pending_toast", msg); } catch (e) {}
+}
+
+function showPendingToast() {
+  try {
+    const msg = sessionStorage.getItem("ashare_pending_toast");
+    if (!msg) return;
+    sessionStorage.removeItem("ashare_pending_toast");
+    setTimeout(function () { toast(msg); }, 300);
+  } catch (e) {}
 }
 
 // 节流提示（避免同步失败时 toast 刷屏）
@@ -783,7 +798,7 @@ function initMode() {
     $("boardFooter").hidden = false;
   } else {
     loadLocal();
-    $("modeBadge").textContent = "编辑模式";
+    $("modeBadge").textContent = boardMeta && boardMeta.boardId ? "编辑模式 · " + boardMeta.boardId : "编辑模式 · 未绑定看板";
     $("editPanel").hidden = false;
     $("boardFooter").hidden = true;
   }
@@ -2098,6 +2113,7 @@ function bindEvents() {
         boardMeta = { boardId: genBoardId(), objectId: null };
       }
       saveBoardMeta();
+      $("modeBadge").textContent = "编辑模式 · " + boardMeta.boardId;
       await pushState();
       const link = location.href.split("#")[0] + "#board=" + boardMeta.boardId;
       copyText(link, function () { toast("看板链接已复制（固定不变，自动同步）"); });
@@ -2151,6 +2167,13 @@ function bindEvents() {
     location.href = location.pathname; // 去掉 hash，回到编辑模式
   });
 
+  $("editBoardLink").addEventListener("click", function (e) {
+    e.preventDefault();
+    if (!boardMeta || !boardMeta.boardId) return;
+    location.href = location.pathname + "#import=" + boardMeta.boardId;
+    location.reload();
+  });
+
   window.addEventListener("resize", function () {
     if ($("historyBody").classList.contains("open")) renderHistory();
   });
@@ -2183,6 +2206,7 @@ function tryImport() {
       boardMeta = { boardId: d.boardId, objectId: d.objectId || null };
       saveBoardMeta();
       saveLocal();
+      setPendingToast("已绑定看板 " + d.boardId + "，后续编辑会同步到该看板");
       location.href = location.pathname; // 去掉 hash，进入编辑模式
     } catch (e) {
       toast("导入数据解析失败");
@@ -2202,6 +2226,7 @@ function tryImport() {
       boardMeta = { boardId: mi[1], objectId: obj.objectId || null };
       saveBoardMeta();
       saveLocal();
+      setPendingToast("已绑定看板 " + mi[1] + "，后续编辑会同步到该看板");
       location.href = location.pathname; // 去掉 hash，进入编辑模式
     } catch (e) {
       toast("云端数据导入失败：" + ((e && e.message) || "网络错误"));
@@ -2216,6 +2241,7 @@ function init() {
   if (tryImport()) return; // #import= 导入流程接管
   initMode();
   bindEvents();
+  showPendingToast();
   if (MODE === "edit") renderForm();
   renderAll();
   renderHistory();
