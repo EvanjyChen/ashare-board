@@ -322,6 +322,7 @@
       <button class="btn btn-ghost" id="syncBoardBtn">同步看板</button>
       <button class="btn btn-primary" id="shareBtn">生成分享链接</button>
     </div>
+    <div class="hint" id="syncStatus"></div>
     <div class="hint">提示：代码填 6 位数字（如 600519，自动识别沪深；北交所 4/8 开头暂不支持）；名称留空将从行情接口自动获取。现金只能通过转入/转出/买入/卖出变动（未计手续费）。数据保存在本机浏览器 localStorage。</div>
   </div>
 
@@ -577,28 +578,47 @@ function normalizeBoardId(input) {
   return m ? (m[1] || m[0]).toLowerCase() : "";
 }
 
+function setSyncStatus(msg) {
+  const el = $("syncStatus");
+  if (el) el.textContent = msg || "";
+}
+
 async function bindCurrentDataToBoard(boardId, options) {
   boardId = normalizeBoardId(boardId);
-  if (!boardId) { toast("请输入有效看板 ID 或看板链接"); return; }
+  if (!boardId) {
+    setSyncStatus("未绑定：请输入有效看板 ID 或看板链接");
+    toast("请输入有效看板 ID 或看板链接");
+    return false;
+  }
   MODE = "edit";
   if (!options || options.syncForm !== false) syncStateFromForm();
   saveLocal();
   boardMeta = { boardId: boardId, objectId: null };
   saveBoardMeta();
   if ($("modeBadge")) $("modeBadge").textContent = "编辑模式 · " + boardMeta.boardId;
+  setSyncStatus("正在绑定并同步到看板 " + boardId + "...");
   const ok = await pushState();
-  if (ok) toast("已绑定并同步到看板 " + boardId);
+  if (ok) {
+    setSyncStatus("已同步到看板 " + boardId);
+    toast("已绑定并同步到看板 " + boardId);
+  }
+  return ok;
 }
 
 async function syncCurrentBoard() {
   if (!boardMeta || !boardMeta.boardId) {
+    setSyncStatus("未绑定看板。请先点“绑定看板”，输入 ve5fdfhjvv。");
     toast("请先绑定看板 ID");
     return;
   }
   syncStateFromForm();
   saveLocal();
+  setSyncStatus("正在同步到看板 " + boardMeta.boardId + "...");
   const ok = await pushState();
-  if (ok) toast("已同步到看板 " + boardMeta.boardId);
+  if (ok) {
+    setSyncStatus("已同步到看板 " + boardMeta.boardId);
+    toast("已同步到看板 " + boardMeta.boardId);
+  }
 }
 
 // 节流提示（避免同步失败时 toast 刷屏）
@@ -864,6 +884,7 @@ function initMode() {
   } else {
     loadLocal();
     $("modeBadge").textContent = boardMeta && boardMeta.boardId ? "编辑模式 · " + boardMeta.boardId : "编辑模式 · 未绑定看板";
+    setSyncStatus(boardMeta && boardMeta.boardId ? "当前绑定看板：" + boardMeta.boardId : "当前未绑定看板，编辑只保存在本机。");
     $("editPanel").hidden = false;
     $("boardFooter").hidden = true;
   }
@@ -1912,7 +1933,11 @@ function pushNow() {
   pushState();
 }
 async function pushState() {
-  if (pushing) { pushAgain = true; return false; }
+  if (pushing) {
+    pushAgain = true;
+    setSyncStatus("已有同步正在进行，请稍后再试。");
+    return false;
+  }
   pushing = true;
   // 注意：不要用 updatedAt/createdAt/objectId 作为自定义字段名（两家都保留）
   const payload = Object.assign({
@@ -1926,6 +1951,7 @@ async function pushState() {
       const where = encodeURIComponent(JSON.stringify({ boardId: boardMeta.boardId }));
       const q = await fetch(syncUrl("?where=" + where + "&order=-updatedAt&limit=1"), { headers: syncHeaders() });
       const qj = await q.json();
+      if (!q.ok) throw new Error(qj.error || ("http " + q.status));
       if (q.ok && qj.results && qj.results[0] && qj.results[0].objectId) {
         boardMeta.objectId = qj.results[0].objectId; // 认领已有记录
         saveBoardMeta();
@@ -1955,7 +1981,9 @@ async function pushState() {
     if (pushAgain) { pushAgain = false; schedulePush(); }
     return true;
   } catch (e) {
-    throttledToast("syncFail", "云端同步失败：" + ((e && e.message) || "网络错误"));
+    const msg = "云端同步失败：" + ((e && e.message) || "网络错误");
+    setSyncStatus(msg);
+    throttledToast("syncFail", msg);
     // 失败自动重试（10s/20s/30s/40s/50s 指数退避，最多 5 次）
     if (pushRetryCount < 5) {
       pushRetryCount++;
