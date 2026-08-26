@@ -319,6 +319,7 @@
     <div class="btn-row">
       <button class="btn btn-primary" id="saveBtn">保存到本地</button>
       <button class="btn btn-ghost" id="bindBoardBtn">绑定看板</button>
+      <button class="btn btn-ghost" id="syncBoardBtn">同步看板</button>
       <button class="btn btn-primary" id="shareBtn">生成分享链接</button>
     </div>
     <div class="hint">提示：代码填 6 位数字（如 600519，自动识别沪深；北交所 4/8 开头暂不支持）；名称留空将从行情接口自动获取。现金只能通过转入/转出/买入/卖出变动（未计手续费）。数据保存在本机浏览器 localStorage。</div>
@@ -585,8 +586,19 @@ async function bindCurrentDataToBoard(boardId, options) {
   boardMeta = { boardId: boardId, objectId: null };
   saveBoardMeta();
   if ($("modeBadge")) $("modeBadge").textContent = "编辑模式 · " + boardMeta.boardId;
-  await pushState();
-  toast("已绑定并同步到看板 " + boardId);
+  const ok = await pushState();
+  if (ok) toast("已绑定并同步到看板 " + boardId);
+}
+
+async function syncCurrentBoard() {
+  if (!boardMeta || !boardMeta.boardId) {
+    toast("请先绑定看板 ID");
+    return;
+  }
+  syncStateFromForm();
+  saveLocal();
+  const ok = await pushState();
+  if (ok) toast("已同步到看板 " + boardMeta.boardId);
 }
 
 // 节流提示（避免同步失败时 toast 刷屏）
@@ -1900,7 +1912,7 @@ function pushNow() {
   pushState();
 }
 async function pushState() {
-  if (pushing) { pushAgain = true; return; }
+  if (pushing) { pushAgain = true; return false; }
   pushing = true;
   // 注意：不要用 updatedAt/createdAt/objectId 作为自定义字段名（两家都保留）
   const payload = Object.assign({
@@ -1926,8 +1938,7 @@ async function pushState() {
         boardMeta.objectId = null;
         saveBoardMeta();
         pushing = false;
-        pushState();
-        return;
+        return pushState();
       }
     } else {
       resp = await fetch(syncUrl(""), { method: "POST", headers: syncHeaders(), body: JSON.stringify(payload) });
@@ -1940,16 +1951,20 @@ async function pushState() {
     }
     saveBoardCache(boardMeta.boardId, payload);
     pushRetryCount = 0; // 成功：重置重试计数
+    pushing = false;
+    if (pushAgain) { pushAgain = false; schedulePush(); }
+    return true;
   } catch (e) {
-    throttledToast("syncFail", "云端同步失败，看板数据可能不是最新");
+    throttledToast("syncFail", "云端同步失败：" + ((e && e.message) || "网络错误"));
     // 失败自动重试（10s/20s/30s/40s/50s 指数退避，最多 5 次）
     if (pushRetryCount < 5) {
       pushRetryCount++;
       setTimeout(function () { if (MODE === "edit") pushState(); }, 10000 * pushRetryCount);
     }
+    pushing = false;
+    if (pushAgain) { pushAgain = false; schedulePush(); }
+    return false;
   }
-  pushing = false;
-  if (pushAgain) { pushAgain = false; schedulePush(); }
 }
 
 /* ---- 看板端：拉取（init 中每 PULL_MS 轮询一次） ---- */
@@ -2169,6 +2184,10 @@ function bindEvents() {
     await bindCurrentDataToBoard(input);
   });
 
+  $("syncBoardBtn").addEventListener("click", function () {
+    syncCurrentBoard();
+  });
+
   $("shareBtn").addEventListener("click", async function () {
     syncStateFromForm();
     saveLocal();
@@ -2179,7 +2198,8 @@ function bindEvents() {
       }
       saveBoardMeta();
       $("modeBadge").textContent = "编辑模式 · " + boardMeta.boardId;
-      await pushState();
+      const ok = await pushState();
+      if (!ok) return;
       const link = location.href.split("#")[0] + "#board=" + boardMeta.boardId;
       copyText(link, function () { toast("看板链接已复制（固定不变，自动同步）"); });
     } else {
