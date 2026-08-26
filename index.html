@@ -1920,7 +1920,7 @@ function genBoardId() {
 }
 
 /* ---- 编辑端：推送（防抖 0.8s；推送中又有变动则补发一次；失败指数退避重试） ---- */
-let pushTimer = null, pushing = false, pushAgain = false, pushRetryCount = 0;
+let pushTimer = null, pushing = false, pushAgain = false, pushRetryCount = 0, pushPromise = null;
 function schedulePush() {
   if (MODE !== "edit" || !syncConfigured() || !boardMeta || !boardMeta.boardId) return;
   clearTimeout(pushTimer);
@@ -1935,10 +1935,17 @@ function pushNow() {
 async function pushState() {
   if (pushing) {
     pushAgain = true;
-    setSyncStatus("已有同步正在进行，请稍后再试。");
-    return false;
+    setSyncStatus("已有同步正在进行，已排队补发。");
+    return pushPromise || false;
   }
   pushing = true;
+  pushPromise = doPushState();
+  const ok = await pushPromise;
+  pushPromise = null;
+  return ok;
+}
+
+async function doPushState() {
   // 注意：不要用 updatedAt/createdAt/objectId 作为自定义字段名（两家都保留）
   const payload = Object.assign({
     boardId: boardMeta.boardId,
@@ -1964,6 +1971,7 @@ async function pushState() {
         boardMeta.objectId = null;
         saveBoardMeta();
         pushing = false;
+        pushPromise = null;
         return pushState();
       }
     } else {
@@ -1978,7 +1986,10 @@ async function pushState() {
     saveBoardCache(boardMeta.boardId, payload);
     pushRetryCount = 0; // 成功：重置重试计数
     pushing = false;
-    if (pushAgain) { pushAgain = false; schedulePush(); }
+    if (pushAgain) {
+      pushAgain = false;
+      return pushState();
+    }
     return true;
   } catch (e) {
     const msg = "云端同步失败：" + ((e && e.message) || "网络错误");
@@ -1990,7 +2001,10 @@ async function pushState() {
       setTimeout(function () { if (MODE === "edit") pushState(); }, 10000 * pushRetryCount);
     }
     pushing = false;
-    if (pushAgain) { pushAgain = false; schedulePush(); }
+    if (pushAgain) {
+      pushAgain = false;
+      return pushState();
+    }
     return false;
   }
 }
