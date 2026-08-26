@@ -441,6 +441,8 @@ const CONFIG = {
   LS_HOLDINGS: "ashare_holdings_v1",  // localStorage：持仓/股票池/计划复盘数据 key
   LS_TX: "ashare_tx_v1",              // localStorage：交易流水 key
   LS_BOARD: "ashare_board_v1",        // localStorage：看板 ID/云端 objectId
+  LS_BOARD_CACHE: "ashare_board_cache_v1", // localStorage：看板模式最近一次成功拉取缓存
+  LS_PULL_BACKOFF: "ashare_pull_backoff_v1", // localStorage：看板拉取限流退避截止时间
   LS_SNAPSHOTS: "ashare_snapshots_v1",// localStorage：历史净值快照 key
   LS_THEME: "ashare_theme",           // localStorage：主题 key
   SNAPSHOT_HOUR: 15,                  // 每日快照时间：15:30 之后
@@ -536,6 +538,34 @@ function showPendingToast() {
     if (!msg) return;
     sessionStorage.removeItem("ashare_pending_toast");
     setTimeout(function () { toast(msg); }, 300);
+  } catch (e) {}
+}
+
+function boardCacheKey(boardId) {
+  return CONFIG.LS_BOARD_CACHE + ":" + String(boardId || "");
+}
+
+function saveBoardCache(boardId, data) {
+  if (!boardId || !data) return;
+  try { localStorage.setItem(boardCacheKey(boardId), JSON.stringify(data)); } catch (e) {}
+}
+
+function loadBoardCache(boardId) {
+  try {
+    const raw = localStorage.getItem(boardCacheKey(boardId));
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+}
+
+function loadPullBackoff() {
+  try { pullBackoffUntil = Number(localStorage.getItem(CONFIG.LS_PULL_BACKOFF)) || 0; } catch (e) { pullBackoffUntil = 0; }
+}
+
+function savePullBackoff(ts) {
+  pullBackoffUntil = Number(ts) || 0;
+  try {
+    if (pullBackoffUntil > Date.now()) localStorage.setItem(CONFIG.LS_PULL_BACKOFF, String(pullBackoffUntil));
+    else localStorage.removeItem(CONFIG.LS_PULL_BACKOFF);
   } catch (e) {}
 }
 
@@ -778,6 +808,9 @@ function initMode() {
     // 云端看板：链接固定，数据从云端拉取
     MODE = "board";
     boardMeta = { boardId: mb[1], objectId: null };
+    loadPullBackoff();
+    const cached = loadBoardCache(boardMeta.boardId);
+    if (cached) applyBoardData(cached);
   } else {
     const m = location.hash.match(/#data=([A-Za-z0-9+/=]+)/);
     if (m) {
@@ -1885,6 +1918,7 @@ async function pushState() {
       boardMeta.objectId = json.objectId;
       saveBoardMeta();
     }
+    saveBoardCache(boardMeta.boardId, payload);
     pushRetryCount = 0; // 成功：重置重试计数
   } catch (e) {
     throttledToast("syncFail", "云端同步失败，看板数据可能不是最新");
@@ -1902,7 +1936,10 @@ async function pushState() {
 async function pullState() {
   if (MODE !== "board" || !boardMeta || !boardMeta.boardId) return;
   if (document.hidden) return;
-  if (Date.now() < pullBackoffUntil) return;
+  if (Date.now() < pullBackoffUntil) {
+    throttledToast("pullBackoff", "看板同步接口请求过多，稍后自动恢复");
+    return;
+  }
   try {
     const where = encodeURIComponent(JSON.stringify({ boardId: boardMeta.boardId }));
     // order=-updatedAt：即使云端存在同 boardId 的历史副本，也始终读最新那条
@@ -1918,11 +1955,13 @@ async function pullState() {
     if (obj.syncedAt && obj.syncedAt === lastPulledAt) return; // 无变化
     lastPulledAt = obj.syncedAt || "";
     applyBoardData(obj);
+    saveBoardCache(boardMeta.boardId, obj);
+    savePullBackoff(0);
     renderAll();
     refreshQuotes(); // 持仓可能变化，立即拉价
   } catch (e) {
     if (e && e.code === 10210) {
-      pullBackoffUntil = Date.now() + 30 * 60 * 1000;
+      savePullBackoff(Date.now() + 30 * 60 * 1000);
       throttledToast("pullLimit", "看板同步接口请求过多，约半小时后自动恢复");
     } else {
       throttledToast("pullFail", "看板数据拉取失败：" + ((e && e.message) || "网络错误"));
@@ -2224,6 +2263,8 @@ function tryImport() {
       if (!obj) { toast("未找到该看板的云端数据"); return; }
       applyBoardData(obj);
       boardMeta = { boardId: mi[1], objectId: obj.objectId || null };
+      saveBoardCache(mi[1], obj);
+      savePullBackoff(0);
       saveBoardMeta();
       saveLocal();
       setPendingToast("已绑定看板 " + mi[1] + "，后续编辑会同步到该看板");
