@@ -318,6 +318,7 @@
     </div>
     <div class="btn-row">
       <button class="btn btn-primary" id="saveBtn">保存到本地</button>
+      <button class="btn btn-ghost" id="bindBoardBtn">绑定看板</button>
       <button class="btn btn-primary" id="shareBtn">生成分享链接</button>
     </div>
     <div class="hint">提示：代码填 6 位数字（如 600519，自动识别沪深；北交所 4/8 开头暂不支持）；名称留空将从行情接口自动获取。现金只能通过转入/转出/买入/卖出变动（未计手续费）。数据保存在本机浏览器 localStorage。</div>
@@ -567,6 +568,25 @@ function savePullBackoff(ts) {
     if (pullBackoffUntil > Date.now()) localStorage.setItem(CONFIG.LS_PULL_BACKOFF, String(pullBackoffUntil));
     else localStorage.removeItem(CONFIG.LS_PULL_BACKOFF);
   } catch (e) {}
+}
+
+function normalizeBoardId(input) {
+  const s = String(input || "").trim();
+  const m = s.match(/board=([a-z0-9]+)/i) || s.match(/import=([a-z0-9]+)/i) || s.match(/bind=([a-z0-9]+)/i) || s.match(/^[a-z0-9]{6,32}$/i);
+  return m ? (m[1] || m[0]).toLowerCase() : "";
+}
+
+async function bindCurrentDataToBoard(boardId, options) {
+  boardId = normalizeBoardId(boardId);
+  if (!boardId) { toast("请输入有效看板 ID 或看板链接"); return; }
+  MODE = "edit";
+  if (!options || options.syncForm !== false) syncStateFromForm();
+  saveLocal();
+  boardMeta = { boardId: boardId, objectId: null };
+  saveBoardMeta();
+  if ($("modeBadge")) $("modeBadge").textContent = "编辑模式 · " + boardMeta.boardId;
+  await pushState();
+  toast("已绑定并同步到看板 " + boardId);
 }
 
 // 节流提示（避免同步失败时 toast 刷屏）
@@ -2143,6 +2163,12 @@ function bindEvents() {
     refreshQuotes();
   });
 
+  $("bindBoardBtn").addEventListener("click", async function () {
+    const input = prompt("输入看板 ID 或粘贴看板链接", boardMeta && boardMeta.boardId ? boardMeta.boardId : "");
+    if (!input) return;
+    await bindCurrentDataToBoard(input);
+  });
+
   $("shareBtn").addEventListener("click", async function () {
     syncStateFromForm();
     saveLocal();
@@ -2236,6 +2262,16 @@ function isTradingTime() {
 //   #import=boardId —— 从云端拉取该看板数据（需要能访问 Bmob）
 // 导入成功后跳回无 hash 的编辑页；返回 true 表示已接管，不再执行常规初始化
 function tryImport() {
+  const mb = location.hash.match(/#bind=([a-z0-9]+)/);
+  if (mb && syncConfigured()) {
+    (async function () {
+      loadLocal();
+      await bindCurrentDataToBoard(mb[1], { syncForm: false });
+      setPendingToast("已绑定并同步到看板 " + mb[1]);
+      location.href = location.pathname;
+    })();
+    return true;
+  }
   const ms = location.hash.match(/#seed=([A-Za-z0-9+/=]+)/);
   if (ms) {
     try {
