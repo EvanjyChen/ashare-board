@@ -365,6 +365,9 @@
     <div class="compact-form date-form">
       <input type="date" id="noteDate" class="date-input">
     </div>
+    <div class="list-tools">
+      <button class="btn btn-primary" id="imageRecognizeBtn">生成识别图片</button>
+    </div>
     <div id="watchEditor">
       <div class="compact-form">
         <input type="text" id="newListName" placeholder="新标签名称">
@@ -2148,6 +2151,69 @@ function fallbackCopy(text, onOk) {
   ta.remove();
 }
 
+function heldStocksForImage() {
+  ensureStateShape();
+  const seen = {};
+  return state.rows.filter(function (row) {
+    return row.code && Number(row.qty) > 0;
+  }).map(function (row) {
+    return {
+      code: codeDigits(row.code),
+      name: row.name || getStockName(row.code) || ""
+    };
+  }).filter(function (item) {
+    if (!item.code || seen[item.code]) return false;
+    seen[item.code] = true;
+    return true;
+  }).sort(function (a, b) {
+    return a.code.localeCompare(b.code);
+  });
+}
+
+function generateRecognitionImage() {
+  const stocks = heldStocksForImage();
+  if (!stocks.length) { toast("暂无持仓股票可生成图片"); return; }
+  const cols = stocks.length > 28 ? 3 : 2;
+  const cellW = 300;
+  const rowH = 58;
+  const pad = 36;
+  const titleH = 76;
+  const rows = Math.ceil(stocks.length / cols);
+  const canvas = document.createElement("canvas");
+  canvas.width = pad * 2 + cols * cellW;
+  canvas.height = pad * 2 + titleH + rows * rowH;
+  const ctx = canvas.getContext("2d");
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#111111";
+  ctx.font = "700 32px -apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif";
+  ctx.fillText("持仓个股", pad, 46);
+  ctx.font = "20px -apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif";
+  ctx.fillStyle = "#555555";
+  ctx.fillText(localDateStr() + "  " + stocks.length + "只", pad + 140, 45);
+  stocks.forEach(function (stock, index) {
+    const col = index % cols;
+    const row = Math.floor(index / cols);
+    const x = pad + col * cellW;
+    const y = pad + titleH + row * rowH;
+    ctx.fillStyle = "#111111";
+    ctx.font = "700 28px Menlo, Monaco, Consolas, monospace";
+    ctx.fillText(stock.code, x, y + 31);
+    if (stock.name) {
+      ctx.fillStyle = "#333333";
+      ctx.font = "22px -apple-system, BlinkMacSystemFont, PingFang SC, Microsoft YaHei, sans-serif";
+      ctx.fillText(stock.name, x + 112, y + 31);
+    }
+  });
+  const a = document.createElement("a");
+  a.href = canvas.toDataURL("image/png");
+  a.download = "ths_recognition_" + localDateStr().replace(/-/g, "") + ".png";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast("已生成 " + stocks.length + " 只持仓识别图片");
+}
+
 /* =====================================================================
  * 事件绑定与初始化
  * =================================================================== */
@@ -2176,6 +2242,8 @@ function bindEvents() {
     sortKey = this.value || "held";
     renderWatchlists();
   });
+
+  $("imageRecognizeBtn").addEventListener("click", generateRecognitionImage);
 
   $("createListBtn").addEventListener("click", function () {
     const name = $("newListName").value.trim();
