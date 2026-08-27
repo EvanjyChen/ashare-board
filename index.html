@@ -1315,6 +1315,32 @@ function autoFillNames() {
   saveLocalOnly();
 }
 
+function todayPositionSplit(code, currentQty) {
+  const today = localDateStr();
+  const txs = (state.txs || []).map(normalizeTx).filter(function (tx) {
+    return tx && tx.code === code && (tx.type === "买入" || tx.type === "卖出") && String(tx.time || "").slice(0, 10) === today;
+  }).sort(function (a, b) {
+    return String(a.time || "").localeCompare(String(b.time || ""));
+  });
+  let buyQty = 0, buyCost = 0, sellQty = 0;
+  txs.forEach(function (tx) {
+    const qty = Number(tx.qty) || 0;
+    const amount = Number(tx.amount) || ((Number(tx.price) || 0) * qty);
+    if (tx.type === "买入") {
+      buyQty += qty;
+      buyCost += amount;
+    } else {
+      sellQty += qty;
+    }
+  });
+  const prevQty = Math.max(0, (Number(currentQty) || 0) - buyQty + sellQty);
+  const sellFromPrev = Math.min(prevQty, sellQty);
+  const sellFromToday = Math.max(0, sellQty - sellFromPrev);
+  const todayQty = Math.max(0, Math.min(Number(currentQty) || 0, buyQty - sellFromToday));
+  const todayCost = buyQty > 0 ? buyCost * (todayQty / buyQty) : 0;
+  return { previousQty: Math.max(0, (Number(currentQty) || 0) - todayQty), todayQty: todayQty, todayCost: todayCost };
+}
+
 /* =====================================================================
  * 盈亏与占比计算（口径见需求说明）
  * =================================================================== */
@@ -1338,7 +1364,10 @@ function calc() {
     const pnl = unrealizedPnl !== null ? realizedPnl + unrealizedPnl : (realizedPnl || null);
     const pnlBase = activeCost + realizedCost;
     const pnlPct = pnlBase > 0 && pnl !== null ? pnl / pnlBase * 100 : null;
-    const liveDayPnl = (q && q.prevClose && qty > 0) ? (q.price - q.prevClose) * qty : 0;
+    const split = todayPositionSplit(r.code, qty);
+    const liveDayPnl = (q && q.prevClose && qty > 0)
+      ? ((q.price - q.prevClose) * split.previousQty) + ((q.price * split.todayQty) - split.todayCost)
+      : 0;
     const dayPnl = (q && q.prevClose && qty > 0) || realizedToday ? liveDayPnl + realizedToday : null;
     const dayValueBase = (value || 0) + realizedTodayValue;
     const dayPnlPct = dayValueBase > 0 && dayPnl !== null ? dayPnl / dayValueBase * 100 : null;
