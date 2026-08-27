@@ -1927,6 +1927,12 @@ function syncUrl(suffix) {
   const prefix = CONFIG.SYNC_PROVIDER === "leancloud" ? "/1.1/classes/" : "/1/classes/";
   return CONFIG.SYNC_SERVER.replace(/\/+$/, "") + prefix + CONFIG.SYNC_CLASS + suffix;
 }
+async function parseSyncResponse(resp) {
+  const text = await resp.text();
+  if (!text) return {};
+  try { return JSON.parse(text); }
+  catch (e) { return { error: text }; }
+}
 function genBoardId() {
   const chars = "abcdefghjkmnpqrstuvwxyz23456789"; // 去掉易混淆字符
   let s = "";
@@ -1977,7 +1983,7 @@ async function doPushState() {
       setSyncStatus("正在查询看板 " + boardMeta.boardId + "...");
       const where = encodeURIComponent(JSON.stringify({ boardId: boardMeta.boardId }));
       const q = await fetch(syncUrl("?where=" + where + "&order=-updatedAt&limit=1"), { headers: syncHeaders() });
-      const qj = await q.json();
+      const qj = await parseSyncResponse(q);
       if (!q.ok) throw new Error(qj.error || ("http " + q.status));
       if (q.ok && qj.results && qj.results[0] && qj.results[0].objectId) {
         boardMeta.objectId = qj.results[0].objectId; // 认领已有记录
@@ -1987,7 +1993,7 @@ async function doPushState() {
     if (boardMeta.objectId) {
       setSyncStatus("正在写入看板 " + boardMeta.boardId + "...");
       resp = await fetch(syncUrl("/" + boardMeta.objectId), { method: "PUT", headers: syncHeaders(), body: JSON.stringify(payload) });
-      if (resp.status === 400 || resp.status === 404) {
+      if (resp.status === 404) {
         // 云端记录被删/失效：丢弃旧 objectId，重走认领/新建流程
         boardMeta.objectId = null;
         saveBoardMeta();
@@ -1999,7 +2005,7 @@ async function doPushState() {
       setSyncStatus("正在创建看板 " + boardMeta.boardId + "...");
       resp = await fetch(syncUrl(""), { method: "POST", headers: syncHeaders(), body: JSON.stringify(payload) });
     }
-    const json = await resp.json();
+    const json = await parseSyncResponse(resp);
     if (!resp.ok) throw new Error(json.error || ("http " + resp.status));
     if (!boardMeta.objectId && json.objectId) {
       boardMeta.objectId = json.objectId;
@@ -2031,16 +2037,17 @@ async function pullState() {
     return;
   }
   try {
-    const where = encodeURIComponent(JSON.stringify({ boardId: boardMeta.boardId }));
-    // order=-updatedAt：即使云端存在同 boardId 的历史副本，也始终读最新那条
-    const resp = await fetch(syncUrl("?where=" + where + "&order=-updatedAt&limit=1"), { headers: syncHeaders() });
-    const json = await resp.json();
+    const knownObjectId = CONFIG.KNOWN_BOARD_OBJECT_IDS[boardMeta.boardId];
+    const resp = knownObjectId
+      ? await fetch(syncUrl("/" + knownObjectId), { headers: syncHeaders() })
+      : await fetch(syncUrl("?where=" + encodeURIComponent(JSON.stringify({ boardId: boardMeta.boardId })) + "&order=-updatedAt&limit=1"), { headers: syncHeaders() });
+    const json = await parseSyncResponse(resp);
     if (!resp.ok) {
       const err = new Error(json.error || ("http " + resp.status));
       err.code = json.code;
       throw err;
     }
-    const obj = (json.results && json.results[0]) || null;
+    const obj = knownObjectId ? json : ((json.results && json.results[0]) || null);
     if (!obj) { throttledToast("pullEmpty", "看板数据不存在或已被删除"); return; }
     if (obj.syncedAt && obj.syncedAt === lastPulledAt) return; // 无变化
     lastPulledAt = obj.syncedAt || "";
@@ -2369,7 +2376,7 @@ function tryImport() {
     try {
       const where = encodeURIComponent(JSON.stringify({ boardId: mi[1] }));
       const resp = await fetch(syncUrl("?where=" + where + "&limit=1"), { headers: syncHeaders() });
-      const json = await resp.json();
+      const json = await parseSyncResponse(resp);
       const obj = (json.results && json.results[0]) || null;
       if (!obj) { toast("未找到该看板的云端数据"); return; }
       applyBoardData(obj);
