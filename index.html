@@ -1315,30 +1315,54 @@ function autoFillNames() {
   saveLocalOnly();
 }
 
-function todayPositionSplit(code, currentQty) {
+function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
+  if (currentPrice === null || currentPrice === undefined || !isFinite(currentPrice)) return null;
   const today = localDateStr();
-  const txs = (state.txs || []).map(normalizeTx).filter(function (tx) {
+  const txs = (state.txs || []).map(function (tx, index) {
+    const normalized = normalizeTx(tx);
+    if (normalized) normalized._index = index;
+    return normalized;
+  }).filter(function (tx) {
     return tx && tx.code === code && (tx.type === "买入" || tx.type === "卖出") && String(tx.time || "").slice(0, 10) === today;
   }).sort(function (a, b) {
-    return String(a.time || "").localeCompare(String(b.time || ""));
+    const byTime = String(a.time || "").localeCompare(String(b.time || ""));
+    return byTime || (a._index - b._index);
   });
-  let buyQty = 0, buyCost = 0, sellQty = 0;
+  let buyQty = 0, sellQty = 0;
+  txs.forEach(function (tx) {
+    if (tx.type === "买入") buyQty += Number(tx.qty) || 0;
+    if (tx.type === "卖出") sellQty += Number(tx.qty) || 0;
+  });
+  const startQty = Math.max(0, (Number(currentQty) || 0) - buyQty + sellQty);
+  const lots = [];
+  if (startQty > 0) {
+    if (!prevClose) return null;
+    lots.push({ qty: startQty, cost: prevClose });
+  }
+  let pnl = 0;
   txs.forEach(function (tx) {
     const qty = Number(tx.qty) || 0;
-    const amount = Number(tx.amount) || ((Number(tx.price) || 0) * qty);
+    if (qty <= 0) return;
     if (tx.type === "买入") {
-      buyQty += qty;
-      buyCost += amount;
-    } else {
-      sellQty += qty;
+      const amount = Number(tx.amount) || ((Number(tx.price) || 0) * qty);
+      lots.push({ qty: qty, cost: qty > 0 ? amount / qty : 0 });
+      return;
+    }
+    let remaining = qty;
+    const sellPrice = Number(tx.price) || (qty > 0 ? (Number(tx.amount) || 0) / qty : 0);
+    while (remaining > 0 && lots.length) {
+      const lot = lots[0];
+      const matched = Math.min(remaining, lot.qty);
+      pnl += (sellPrice - lot.cost) * matched;
+      lot.qty -= matched;
+      remaining -= matched;
+      if (lot.qty <= 0.000001) lots.shift();
     }
   });
-  const prevQty = Math.max(0, (Number(currentQty) || 0) - buyQty + sellQty);
-  const sellFromPrev = Math.min(prevQty, sellQty);
-  const sellFromToday = Math.max(0, sellQty - sellFromPrev);
-  const todayQty = Math.max(0, Math.min(Number(currentQty) || 0, buyQty - sellFromToday));
-  const todayCost = buyQty > 0 ? buyCost * (todayQty / buyQty) : 0;
-  return { previousQty: Math.max(0, (Number(currentQty) || 0) - todayQty), todayQty: todayQty, todayCost: todayCost };
+  lots.forEach(function (lot) {
+    pnl += (currentPrice - lot.cost) * lot.qty;
+  });
+  return pnl;
 }
 
 /* =====================================================================
@@ -1347,7 +1371,7 @@ function todayPositionSplit(code, currentQty) {
 function calc() {
   let stockValue = 0;   // 股票总市值 = Σ(当前价 × 数量)
   let stockCost = 0;    // 股票总成本 = Σ(成本价 × 数量)
-  let todayPnl = 0;     // 今日盈亏 = Σ((当前价 - 昨收) × 数量)
+  let todayPnl = 0;     // 今日盈亏按当日交易批次计算：昨仓以昨收为基准，今日买入以买入价为基准
   let todayKnown = false;
   const today = localDateStr();
   const items = state.rows.map(function (r) {
@@ -1358,17 +1382,12 @@ function calc() {
     const activeCost = r.cost * qty;
     const realizedPnl = Number(r.realizedPnl) || 0;
     const realizedCost = Number(r.realizedCost) || 0;
-    const realizedToday = Number(r.realizedByDate && r.realizedByDate[today]) || 0;
     const realizedTodayValue = Number(r.realizedValueByDate && r.realizedValueByDate[today]) || 0;
     const unrealizedPnl = price !== null ? (price - r.cost) * qty : (qty === 0 ? 0 : null);
     const pnl = unrealizedPnl !== null ? realizedPnl + unrealizedPnl : (realizedPnl || null);
     const pnlBase = activeCost + realizedCost;
     const pnlPct = pnlBase > 0 && pnl !== null ? pnl / pnlBase * 100 : null;
-    const split = todayPositionSplit(r.code, qty);
-    const liveDayPnl = (q && q.prevClose && qty > 0)
-      ? ((q.price - q.prevClose) * split.previousQty) + ((q.price * split.todayQty) - split.todayCost)
-      : 0;
-    const dayPnl = (q && q.prevClose && qty > 0) || realizedToday ? liveDayPnl + realizedToday : null;
+    const dayPnl = q ? calcLiveDayPnl(r.code, qty, q.price, q.prevClose) : null;
     const dayValueBase = (value || 0) + realizedTodayValue;
     const dayPnlPct = dayValueBase > 0 && dayPnl !== null ? dayPnl / dayValueBase * 100 : null;
     if (value !== null) stockValue += value;
