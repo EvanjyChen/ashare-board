@@ -365,10 +365,6 @@
     <div class="compact-form date-form">
       <input type="date" id="noteDate" class="date-input">
     </div>
-    <div class="list-tools">
-      <button class="btn btn-primary" id="copyThsBtn">复制同花顺自选</button>
-      <button class="btn btn-ghost" id="exportThsBtn">下载同花顺文件</button>
-    </div>
     <div id="watchEditor">
       <div class="compact-form">
         <input type="text" id="newListName" placeholder="新标签名称">
@@ -2152,46 +2148,6 @@ function fallbackCopy(text, onOk) {
   ta.remove();
 }
 
-function heldThsCodes() {
-  ensureStateShape();
-  const seen = {};
-  return state.rows.filter(function (row) {
-    return row.code && Number(row.qty) > 0;
-  }).map(function (row) {
-    return codeDigits(row.code);
-  }).filter(function (code) {
-    if (!code || seen[code]) return false;
-    seen[code] = true;
-    return true;
-  }).sort();
-}
-
-function thsWatchlistText() {
-  return heldThsCodes().join("\n");
-}
-
-function copyThsWatchlist() {
-  const text = thsWatchlistText();
-  if (!text) { toast("暂无持仓股票可复制"); return; }
-  copyText(text, function () { toast("已复制 " + heldThsCodes().length + " 只持仓代码"); });
-}
-
-function exportThsWatchlist() {
-  const text = thsWatchlistText();
-  if (!text) { toast("暂无持仓股票可导出"); return; }
-  const blob = new Blob([text + "\n"], { type: "text/plain;charset=utf-8" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "ths_holdings_" + localDateStr().replace(/-/g, "") + ".txt";
-  document.body.appendChild(a);
-  a.click();
-  setTimeout(function () {
-    URL.revokeObjectURL(a.href);
-    a.remove();
-  }, 0);
-  toast("已下载 " + heldThsCodes().length + " 只持仓代码");
-}
-
 /* =====================================================================
  * 事件绑定与初始化
  * =================================================================== */
@@ -2220,9 +2176,6 @@ function bindEvents() {
     sortKey = this.value || "held";
     renderWatchlists();
   });
-
-  $("copyThsBtn").addEventListener("click", copyThsWatchlist);
-  $("exportThsBtn").addEventListener("click", exportThsWatchlist);
 
   $("createListBtn").addEventListener("click", function () {
     const name = $("newListName").value.trim();
