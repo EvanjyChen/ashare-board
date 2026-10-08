@@ -1984,6 +1984,61 @@ async function parseSyncResponse(resp) {
   try { return JSON.parse(text); }
   catch (e) { return { error: text }; }
 }
+// Bmob limits a request to 40 KiB. Measure the actual UTF-8 JSON body.
+const SYNC_BODY_LIMIT = 38000;
+function syncBodyBytes(value) {
+  return new TextEncoder().encode(JSON.stringify(value)).length;
+}
+async function encodeSyncPayload(payload) {
+  const stream = new Blob([JSON.stringify(payload)]).stream().pipeThrough(new CompressionStream("gzip"));
+  const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
+  let binary = "";
+  bytes.forEach(function (byte) { binary += String.fromCharCode(byte); });
+  return btoa(binary);
+}
+async function decodeSyncPayload(row) {
+  if (!row || (!row.syncPacked && !(row.syncChunks && row.syncChunks.length))) return row;
+  let packed = row.syncPacked || "";
+  if (row.syncChunks && row.syncChunks.length) {
+    if (!Array.isArray(row.syncChunks)) throw new Error("云端分片索引无效");
+    for (const id of row.syncChunks) {
+      const resp = await fetch(syncUrl("/" + encodeURIComponent(id)), { headers: syncHeaders() });
+      const chunk = await parseSyncResponse(resp);
+      if (!resp.ok || chunk.error || typeof chunk.syncChunkData !== "string") {
+        throw new Error(chunk.error || "云端数据分片读取失败，请重试");
+      }
+      packed += chunk.syncChunkData;
+    }
+  }
+  const bytes = Uint8Array.from(atob(packed), function (c) { return c.charCodeAt(0); });
+  const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+  const payload = JSON.parse(await new Response(stream).text());
+  if (payload.boardId !== row.boardId || !Array.isArray(payload.rows)) throw new Error("云端数据校验失败");
+  return Object.assign({}, row, payload, { syncPacked: "", syncChunks: [] });
+}
+async function prepareSyncPayload(payload) {
+  const plain = Object.assign({}, payload, { syncPacked: "", syncChunks: [] });
+  if (syncBodyBytes(plain) <= SYNC_BODY_LIMIT) return plain;
+  const packed = await encodeSyncPayload(payload);
+  const result = {
+    boardId: payload.boardId, syncedAt: payload.syncedAt,
+    cash: 0, rows: [], lists: [], pool: [], notes: {}, txs: [],
+    syncPacked: packed, syncChunks: []
+  };
+  if (syncBodyBytes(result) <= SYNC_BODY_LIMIT) return result;
+  result.syncPacked = "";
+  // Immutable chunks: publish the new manifest only after every upload succeeds.
+  // Previous chunks remain readable by clients fetching the previous manifest.
+  for (let offset = 0; offset < packed.length; offset += 32000) {
+    const body = { syncChunkData: packed.slice(offset, offset + 32000) };
+    const resp = await fetch(syncUrl(""), { method: "POST", headers: syncHeaders(), body: JSON.stringify(body) });
+    const json = await parseSyncResponse(resp);
+    if (!resp.ok || json.error || !json.objectId) throw new Error(json.error || "云端数据分片上传失败");
+    result.syncChunks.push(json.objectId);
+  }
+  if (syncBodyBytes(result) > SYNC_BODY_LIMIT) throw new Error("看板数据过大，无法保存分片索引");
+  return result;
+}
 function genBoardId() {
   const chars = "abcdefghjkmnpqrstuvwxyz23456789"; // 去掉易混淆字符
   let s = "";
@@ -2035,15 +2090,16 @@ async function doPushState() {
       const where = encodeURIComponent(JSON.stringify({ boardId: boardMeta.boardId }));
       const q = await fetch(syncUrl("?where=" + where + "&order=-updatedAt&limit=1"), { headers: syncHeaders() });
       const qj = await parseSyncResponse(q);
-      if (!q.ok) throw new Error(qj.error || ("http " + q.status));
+      if (!q.ok || qj.error) throw new Error(qj.error || ("http " + q.status));
       if (q.ok && qj.results && qj.results[0] && qj.results[0].objectId) {
         boardMeta.objectId = qj.results[0].objectId; // 认领已有记录
         saveBoardMeta();
       }
     }
+    const uploadPayload = await prepareSyncPayload(payload);
     if (boardMeta.objectId) {
       setSyncStatus("正在写入看板 " + boardMeta.boardId + "...");
-      resp = await fetch(syncUrl("/" + boardMeta.objectId), { method: "PUT", headers: syncHeaders(), body: JSON.stringify(payload) });
+      resp = await fetch(syncUrl("/" + boardMeta.objectId), { method: "PUT", headers: syncHeaders(), body: JSON.stringify(uploadPayload) });
       if (resp.status === 404) {
         // 云端记录被删/失效：丢弃旧 objectId，重走认领/新建流程
         boardMeta.objectId = null;
@@ -2054,10 +2110,10 @@ async function doPushState() {
       }
     } else {
       setSyncStatus("正在创建看板 " + boardMeta.boardId + "...");
-      resp = await fetch(syncUrl(""), { method: "POST", headers: syncHeaders(), body: JSON.stringify(payload) });
+      resp = await fetch(syncUrl(""), { method: "POST", headers: syncHeaders(), body: JSON.stringify(uploadPayload) });
     }
     const json = await parseSyncResponse(resp);
-    if (!resp.ok) throw new Error(json.error || ("http " + resp.status));
+    if (!resp.ok || json.error) throw new Error(json.error || ("http " + resp.status));
     if (!boardMeta.objectId && json.objectId) {
       boardMeta.objectId = json.objectId;
       saveBoardMeta();
@@ -2093,14 +2149,15 @@ async function pullState() {
       ? await fetch(syncUrl("/" + knownObjectId), { headers: syncHeaders() })
       : await fetch(syncUrl("?where=" + encodeURIComponent(JSON.stringify({ boardId: boardMeta.boardId })) + "&order=-updatedAt&limit=1"), { headers: syncHeaders() });
     const json = await parseSyncResponse(resp);
-    if (!resp.ok) {
+    if (!resp.ok || json.error) {
       const err = new Error(json.error || ("http " + resp.status));
       err.code = json.code;
       throw err;
     }
-    const obj = knownObjectId ? json : ((json.results && json.results[0]) || null);
+    let obj = knownObjectId ? json : ((json.results && json.results[0]) || null);
     if (!obj) { throttledToast("pullEmpty", "看板数据不存在或已被删除"); return; }
     if (obj.syncedAt && obj.syncedAt === lastPulledAt) return; // 无变化
+    obj = await decodeSyncPayload(obj);
     lastPulledAt = obj.syncedAt || "";
     applyBoardData(obj);
     saveBoardCache(boardMeta.boardId, obj);
@@ -2493,7 +2550,8 @@ function tryImport() {
       const where = encodeURIComponent(JSON.stringify({ boardId: mi[1] }));
       const resp = await fetch(syncUrl("?where=" + where + "&limit=1"), { headers: syncHeaders() });
       const json = await parseSyncResponse(resp);
-      const obj = (json.results && json.results[0]) || null;
+      if (!resp.ok || json.error) throw new Error(json.error || ("http " + resp.status));
+      const obj = await decodeSyncPayload((json.results && json.results[0]) || null);
       if (!obj) { toast("未找到该看板的云端数据"); return; }
       applyBoardData(obj);
       boardMeta = { boardId: mi[1], objectId: obj.objectId || null };
