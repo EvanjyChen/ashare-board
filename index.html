@@ -323,7 +323,7 @@
       <button class="btn btn-primary" id="shareBtn">生成分享链接</button>
     </div>
     <div class="hint" id="syncStatus"></div>
-    <div class="hint">提示：代码填 6 位数字（如 600519，自动识别沪深；北交所 4/8 开头暂不支持）；名称留空将从行情接口自动获取。现金只能通过转入/转出/买入/卖出变动（未计手续费）。数据保存在本机浏览器 localStorage。</div>
+    <div class="hint">提示：支持沪深六位代码、北交所代码（如 920087）和港股五位代码（如 09992）。名称留空将从行情接口自动获取。港股价格为港元，当前资产合计不进行汇率换算。现金只能通过转入/转出/买入/卖出变动（未计手续费）。数据保存在本机浏览器 localStorage。</div>
   </div>
 
   <!-- 行情加载状态 -->
@@ -1121,12 +1121,15 @@ function splitCode(code) {
   return { mkt: norm.slice(0, 2).toUpperCase(), num: norm.slice(2) };
 }
 
-// 用户输入 -> 内部代码：支持 "600519" / "sh600519" / "SH600519"，自动识别沪深
-// 5/6/9 开头 -> 沪市；0/1/2/3 开头 -> 深市（北交所 4/8 暂不支持）
+// 五位为港股；920、4、8 开头为北交所；兼容已有的市场前缀。
 function normalizeCode(raw) {
-  const m = String(raw || "").toLowerCase().match(/(\d{6})/);
+  const m = String(raw || "").trim().toLowerCase().match(/^(?:(sh|sz|bj|hk))?(\d{5,6})$/);
   if (!m) return "";
-  const num = m[1];
+  const num = m[2];
+  if (num.length === 5) return !m[1] || m[1] === "hk" ? "hk" + num : "";
+  if (m[1] === "hk") return "";
+  if (/^(920|[48])/.test(num)) return "bj" + num;
+  if (m[1]) return m[1] + num;
   const first = num.charAt(0);
   return (first === "5" || first === "6" || first === "9" ? "sh" : "sz") + num;
 }
@@ -1142,7 +1145,7 @@ function fetchEastmoney(codes) {
     const secids = [];
     codes.forEach(function (c) {
       const p = splitCode(c);
-      if (p) secids.push((p.mkt === "SH" ? "1." : "0.") + p.num);
+      if (p) secids.push((p.mkt === "HK" ? "116." : p.mkt === "SH" ? "1." : "0.") + p.num);
     });
     if (!secids.length) return reject(new Error("eastmoney: no valid code"));
     const cbName = "__emQuoteCb";
@@ -1155,8 +1158,9 @@ function fetchEastmoney(codes) {
       const out = {};
       if (json && json.rc === 0 && json.data && Array.isArray(json.data.diff)) {
         json.data.diff.forEach(function (d) {
-          const mkt = d.f13 === 1 ? "sh" : "sz"; // f13: 1=沪 0=深
-          out[mkt + d.f12] = {
+          const code = normalizeCode(d.f13 === 116 ? "hk" + String(d.f12).padStart(5, "0") : d.f12);
+          if (!code) return;
+          out[code] = {
             name: d.f14 || "",
             price: parseFloat(d.f2) || 0,   // 停牌时可能为 "-"，parseFloat 得 NaN -> 0，后续回退昨收
             open: parseFloat(d.f17) || 0,
@@ -1174,6 +1178,8 @@ function fetchEastmoney(codes) {
 
 /* ---------- 新浪（JSONP；有 Referer 校验，浏览器直开可能被 403，仅作最后兜底） ---------- */
 function fetchSina(codes) {
+  codes = codes.filter(function (code) { return /^(sh|sz)/.test(code); });
+  if (!codes.length) return Promise.reject(new Error("sina: unsupported market"));
   return new Promise(function (resolve, reject) {
     const s = document.createElement("script");
     s.charset = "gbk"; // 新浪接口返回 GBK 编码
@@ -1215,7 +1221,7 @@ function fetchTencent(codes) {
         if (!raw) return;
         const f = raw.split("~"); // 1名称 3当前价 4昨收 5今开 30日期时间(yyyyMMddHHmmss)
         if (f.length < 6) return;
-        const dt = f[30] || "";
+        const dt = (f[30] || "").replace(/\D/g, "");
         out[code] = {
           name: f[1],
           price: parseFloat(f[3]) || 0,
