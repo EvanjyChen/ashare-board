@@ -1,0 +1,13 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const html = fs.readFileSync(`${__dirname}/index.html`, 'utf8');
+const context = vm.createContext({state:{cash:1000,rows:[{code:'hk09992',cost:100,qty:10}]},quotes:{hk09992:{price:120,prevClose:110}},localDateStr:()=> '2026-11-02',calcLiveDayPnl:()=>100});
+vm.runInContext(html.slice(html.indexOf('let hkdCny ='),html.indexOf('function renderAll()')),context);
+assert.ok(Number.isNaN(context.calc().totalAsset));
+vm.runInContext('hkdCny = 0.85',context);
+assert.equal(context.calc().stockValue,1020);
+assert.equal(context.calc().totalAsset,2020);
+assert.equal(context.calc().totalPnl,170);
+assert.equal(context.calc().todayPnl,85);
+console.log('PASS: RMB valuation, profit, daily profit, missing exchange rate');

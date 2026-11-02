@@ -323,10 +323,11 @@
       <button class="btn btn-primary" id="shareBtn">生成分享链接</button>
     </div>
     <div class="hint" id="syncStatus"></div>
-    <div class="hint">提示：支持沪深六位代码、北交所代码（如 920087）和港股五位代码（如 09992）。名称留空将从行情接口自动获取。港股价格为港元，当前资产合计不进行汇率换算。现金只能通过转入/转出/买入/卖出变动（未计手续费）。数据保存在本机浏览器 localStorage。</div>
+    <div class="hint">支持沪深、北交所（920087）和港股（09992）。港股报价、成本价和交易金额以港元计；市值、盈亏和现金以人民币计，按最新可用汇率折算，不含历史汇兑损益。旧交易现金不追溯重算。数据保存在本机浏览器。</div>
   </div>
 
   <!-- 行情加载状态 -->
+  <div class="hint" id="fxStatus">人民币汇总；港股报价及成本价以港元计，等待汇率。</div>
   <div id="loadingTip" class="loading">行情加载中…</div>
 
   <!-- 股票池 / 标签 / 持仓计划复盘 -->
@@ -713,6 +714,7 @@ function normalizeTx(tx) {
     price: Number(tx.price) || 0,
     qty: Number(tx.qty) || 0,
     amount: Number(tx.amount) || 0,
+    cashAmountCny: Number.isFinite(tx.cashAmountCny) ? tx.cashAmountCny : null,
     realizedPnl: Number(tx.realizedPnl) || 0,
     time: tx.time || ""
   };
@@ -1054,12 +1056,15 @@ function doTrade(isBuy) {
   if (!price || price <= 0) { toast("请输入有效价格"); return; }
   if (!qty || qty <= 0) { toast("请输入有效数量"); return; }
   const amount = Math.round(price * qty * 100) / 100;
+  const rate = currencyRate(code);
+  if (!rate) { toast("港币汇率尚未取得，请刷新行情后重试"); return; }
+  const cashAmountCny = Math.round(amount * rate * 100) / 100;
   let row = null;
   state.rows.forEach(function (r) { if (r.code === code) row = r; });
 
   if (isBuy) {
-    if (amount > state.cash) { toast("现金不足，还差 " + fmt(amount - state.cash) + " 元"); return; }
-    state.cash = Math.round((state.cash - amount) * 100) / 100;
+    if (cashAmountCny > state.cash) { toast("人民币现金不足"); return; }
+    state.cash = Math.round((state.cash - cashAmountCny) * 100) / 100;
     if (row) {
       // 加仓：成本价按加权平均更新
       row.cost = Math.round(((row.cost * row.qty + amount) / (row.qty + qty)) * 10000) / 10000;
@@ -1067,8 +1072,8 @@ function doTrade(isBuy) {
     } else {
       state.rows.push({ code: code, name: (quotes[code] && quotes[code].name) || "", cost: price, qty: qty });
     }
-    logTx({ type: "买入", code: codeDigits(code), price: price, qty: qty, amount: amount, time: txTime });
-    toast("已买入 " + codeDigits(code) + " × " + fmt(qty, 0) + "，扣款 " + fmt(amount));
+    logTx({ type: "买入", code: codeDigits(code), price: price, qty: qty, amount: amount, cashAmountCny: cashAmountCny, time: txTime });
+    toast("已买入 " + codeDigits(code) + " × " + fmt(qty, 0) + "，扣款人民币 " + fmt(cashAmountCny));
   } else {
     if (!row || qty > row.qty) { toast("持仓不足，无法卖出"); return; }
     const tradeDate = tradeDateStr();
@@ -1080,13 +1085,13 @@ function doTrade(isBuy) {
     row.realizedValueByDate = row.realizedValueByDate || {};
     row.realizedByDate[tradeDate] = Math.round(((Number(row.realizedByDate[tradeDate]) || 0) + realized) * 100) / 100;
     row.realizedValueByDate[tradeDate] = Math.round(((Number(row.realizedValueByDate[tradeDate]) || 0) + amount) * 100) / 100;
-    state.cash = Math.round((state.cash + amount) * 100) / 100;
+    state.cash = Math.round((state.cash + cashAmountCny) * 100) / 100;
     row.qty -= qty;
     if (row.qty <= 0) { // 清仓：保留数量 0 的历史持仓，用于展示已实现盈亏
       row.qty = 0;
     }
-    logTx({ type: "卖出", code: codeDigits(code), price: price, qty: qty, amount: amount, realizedPnl: realized, time: txTime });
-    toast("已卖出 " + codeDigits(code) + " × " + fmt(qty, 0) + "，回款 " + fmt(amount) + "，盈亏 " + fmtSigned(realized));
+    logTx({ type: "卖出", code: codeDigits(code), price: price, qty: qty, amount: amount, cashAmountCny: cashAmountCny, realizedPnl: realized, time: txTime });
+    toast("已卖出 " + codeDigits(code) + " × " + fmt(qty, 0) + "，回款人民币 " + fmt(cashAmountCny));
   }
   saveLocalOnly();
   pushNow(); // 交易立即同步到云端看板
@@ -1212,10 +1217,15 @@ function fetchTencent(codes) {
   return new Promise(function (resolve, reject) {
     const s = document.createElement("script");
     s.charset = "gbk";
-    s.src = CONFIG.TENCENT_API + codes.join(",") + "&_=" + Date.now();
+    s.src = CONFIG.TENCENT_API + codes.concat("whHKDCNY").join(",") + "&_=" + Date.now();
     s.onload = function () {
       s.remove();
       const out = {};
+      const fx = String(window.v_whHKDCNY || "").split("~");
+      if (Number(fx[3]) > 0) {
+        hkdCny = Number(fx[3]);
+        if ($("fxStatus")) $("fxStatus").textContent = "1 港元 = " + hkdCny + " 人民币 · 汇率时间 " + fx[5] + "；市值及盈亏按此汇率折算（不含历史汇兑损益）。";
+      }
       codes.forEach(function (code) {
         const raw = window["v_" + code];
         if (!raw) return;
@@ -1377,6 +1387,8 @@ function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
 /* =====================================================================
  * 盈亏与占比计算（口径见需求说明）
  * =================================================================== */
+let hkdCny = null;
+function currencyRate(code) { return /^hk/.test(code) ? hkdCny : 1; }
 function calc() {
   let stockValue = 0;   // 股票总市值 = Σ(当前价 × 数量)
   let stockCost = 0;    // 股票总成本 = Σ(成本价 × 数量)
@@ -1387,18 +1399,21 @@ function calc() {
     const q = quotes[r.code];
     const price = q ? q.price : null;
     const qty = Number(r.qty) || 0;
-    const value = price !== null ? price * qty : (qty === 0 ? 0 : null);
-    const activeCost = r.cost * qty;
-    const realizedPnl = Number(r.realizedPnl) || 0;
-    const realizedCost = Number(r.realizedCost) || 0;
-    const realizedTodayValue = Number(r.realizedValueByDate && r.realizedValueByDate[today]) || 0;
-    const unrealizedPnl = price !== null ? (price - r.cost) * qty : (qty === 0 ? 0 : null);
+    const rate = currencyRate(r.code);
+    const value = rate && price !== null ? price * qty * rate : (qty === 0 ? 0 : null);
+    const activeCost = r.cost * qty * (rate || NaN);
+    const realizedPnl = (Number(r.realizedPnl) || 0) * (rate || NaN);
+    const realizedCost = (Number(r.realizedCost) || 0) * (rate || NaN);
+    const realizedTodayValue = (Number(r.realizedValueByDate && r.realizedValueByDate[today]) || 0) * (rate || NaN);
+    const unrealizedPnl = rate && price !== null ? (price - r.cost) * qty * rate : (qty === 0 ? 0 : null);
     const pnl = unrealizedPnl !== null ? realizedPnl + unrealizedPnl : (realizedPnl || null);
     const pnlBase = activeCost + realizedCost;
     const pnlPct = pnlBase > 0 && pnl !== null ? pnl / pnlBase * 100 : null;
-    const dayPnl = q ? calcLiveDayPnl(r.code, qty, q.price, q.prevClose) : null;
+    const nativeDayPnl = q ? calcLiveDayPnl(r.code, qty, q.price, q.prevClose) : null;
+    const dayPnl = rate && nativeDayPnl !== null ? nativeDayPnl * rate : null;
     const dayValueBase = (value || 0) + realizedTodayValue;
     const dayPnlPct = dayValueBase > 0 && dayPnl !== null ? dayPnl / dayValueBase * 100 : null;
+    if (!rate) stockValue = NaN;
     if (value !== null) stockValue += value;
     stockCost += pnlBase;
     if (dayPnl !== null) { todayPnl += dayPnl; todayKnown = true; }
@@ -1412,8 +1427,8 @@ function calc() {
     stockCost: stockCost,
     cash: state.cash,
     totalAsset: stockValue + state.cash,                          // 总资产 = 股票市值 + 现金
-    todayPnl: todayKnown ? todayPnl : null,                       // 无昨收则显示 --
-    totalPnl: totalPnl,
+    todayPnl: Number.isFinite(stockValue) && todayKnown ? todayPnl : null,
+    totalPnl: Number.isFinite(stockValue) ? totalPnl : null,
     totalPnlPct: totalPnlPct
   };
 }
@@ -1650,9 +1665,10 @@ function deleteTrade(index) {
   const code = normalizeCode(tx.code);
   const qty = Number(tx.qty) || 0;
   const amount = Math.round(((Number(tx.amount) || (Number(tx.price) || 0) * qty)) * 100) / 100;
+  const cashAmountCny = tx.cashAmountCny === null ? amount : tx.cashAmountCny;
   let row = state.rows.find(function (r) { return r.code === code; });
   if (tx.type === "买入") {
-    state.cash = Math.round((state.cash + amount) * 100) / 100;
+    state.cash = Math.round((state.cash + cashAmountCny) * 100) / 100;
     if (row) {
       const oldQty = Number(row.qty) || 0;
       const nextQty = Math.max(0, Math.round((oldQty - qty) * 10000) / 10000);
@@ -1661,7 +1677,7 @@ function deleteTrade(index) {
       if (nextQty > 0) row.cost = Math.round((nextCostTotal / nextQty) * 10000) / 10000;
     }
   } else {
-    state.cash = Math.round((state.cash - amount) * 100) / 100;
+    state.cash = Math.round((state.cash - cashAmountCny) * 100) / 100;
     if (!row) {
       row = { code: code, name: getStockName(code), cost: Number(tx.price) || 0, qty: 0, realizedPnl: 0, realizedCost: 0, realizedByDate: {}, realizedValueByDate: {} };
       state.rows.push(row);
@@ -1870,6 +1886,7 @@ function localDateStr() {
 // 每日 15:30 后或首次打开页面时，若当日无快照则记录（日期优先取行情日期）
 function maybeSnapshot() {
   const c = calc();
+  if (!Number.isFinite(c.totalAsset)) return;
   if (!state.rows.length) return;
   let quoteDate = "";
   for (const code in quotes) { if (quotes[code].date) { quoteDate = quotes[code].date; break; } }
