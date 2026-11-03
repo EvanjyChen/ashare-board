@@ -1389,6 +1389,15 @@ function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
  * =================================================================== */
 let hkdCny = null;
 function currencyRate(code) { return /^hk/.test(code) ? hkdCny : 1; }
+function chinaDate() {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+}
+function assetDayPnl(totalAsset, snapshots, today) {
+  const prior = snapshots.filter(function (s) {
+    return s.isClose === true && s.date < today && Number.isFinite(s.stockValue) && Number.isFinite(s.cash);
+  }).sort(function (a, b) { return b.date.localeCompare(a.date); })[0];
+  return prior && Number.isFinite(totalAsset) ? totalAsset - (prior.stockValue + prior.cash) : null;
+}
 function calc() {
   let stockValue = 0;   // 股票总市值 = Σ(当前价 × 数量)
   let stockCost = 0;    // 股票总成本 = Σ(成本价 × 数量)
@@ -1427,7 +1436,7 @@ function calc() {
     stockCost: stockCost,
     cash: state.cash,
     totalAsset: stockValue + state.cash,                          // 总资产 = 股票市值 + 现金
-    todayPnl: Number.isFinite(stockValue) && todayKnown ? todayPnl : null,
+    todayPnl: assetDayPnl(stockValue + state.cash, loadSnapshots(), chinaDate()),
     totalPnl: Number.isFinite(stockValue) ? totalPnl : null,
     totalPnlPct: totalPnlPct
   };
@@ -1449,6 +1458,7 @@ function renderOverview() {
 
   const tp = $("todayPnl");
   tp.textContent = c.todayPnl === null ? "--" : fmtSigned(c.todayPnl);
+  tp.title = "当前人民币总资产减最近一次已记录的收盘总资产；含资金转入转出。缺少收盘基准时显示 --。";
   tp.className = "v " + pnlClass(c.todayPnl);
 
   const ap = $("totalPnl");
@@ -1890,16 +1900,20 @@ function maybeSnapshot() {
   if (!state.rows.length) return;
   let quoteDate = "";
   for (const code in quotes) { if (quotes[code].date) { quoteDate = quotes[code].date; break; } }
-  const today = quoteDate || localDateStr(); // 接口未开盘时用本地日期
+  const today = chinaDate();
+  if (quoteDate !== today) return; // 周末、节假日或旧行情不生成当日收盘记录
+  if (state.rows.some(function (r) { return r.qty > 0 && (!quotes[r.code] || quotes[r.code].date !== today); })) return;
 
   const now = new Date();
-  const afterClose = now.getHours() > CONFIG.SNAPSHOT_HOUR ||
-    (now.getHours() === CONFIG.SNAPSHOT_HOUR && now.getMinutes() >= CONFIG.SNAPSHOT_MIN);
+  const chinaHour = Number(new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Shanghai', hour: '2-digit', hourCycle: 'h23' }).format(now));
+  const afterClose = chinaHour >= (state.rows.some(function (r) { return /^hk/.test(r.code) && r.qty > 0; }) ? 17 : 16);
 
   const snaps = loadSnapshots();
-  const hasToday = snaps.some(function (s) { return s.date === today; });
-  if (!hasToday && (afterClose || firstQuoteLoaded)) {
-    snaps.push({ date: today, stockValue: Math.round(c.stockValue * 100) / 100, cash: c.cash });
+  const hasToday = snaps.some(function (s) { return s.date === today && s.isClose === true; });
+  if (!hasToday && afterClose) {
+    const oldIndex = snaps.findIndex(function (s) { return s.date === today; });
+    if (oldIndex >= 0) snaps.splice(oldIndex, 1);
+    snaps.push({ date: today, stockValue: Math.round(c.stockValue * 100) / 100, cash: c.cash, isClose: true });
     saveSnapshots(snaps);
     renderHistory();
   }
@@ -1915,8 +1929,8 @@ function renderHistory() {
   for (let i = snaps.length - 1; i >= 0; i--) {
     const s = snaps[i];
     const prev = i > 0 ? snaps[i - 1] : null;
-    const dayPnl = prev ? s.stockValue - prev.stockValue : null;
-    const dayPct = (prev && prev.stockValue > 0) ? dayPnl / prev.stockValue * 100 : null;
+    const dayPnl = prev ? (s.stockValue + s.cash) - (prev.stockValue + prev.cash) : null;
+    const dayPct = (prev && prev.stockValue + prev.cash > 0) ? dayPnl / (prev.stockValue + prev.cash) * 100 : null;
     const tr = document.createElement("tr");
     tr.innerHTML =
       "<td>" + escapeHtml(s.date) + "</td>" +
