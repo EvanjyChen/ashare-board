@@ -265,6 +265,17 @@
   .footer-link a { color: var(--accent); text-decoration: none; }
 
   [hidden] { display: none !important; }
+.portrait-wrap { overflow:auto; max-height:80vh; background:#191c20; color:#d5dbe1; border-radius:8px; }
+.portrait-wrap table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.portrait-wrap th { position:sticky; top:0; background:#242930; z-index:2; }
+.portrait-wrap td,.portrait-wrap th { padding:8px 10px; border:1px solid #2c323a; text-align:right; }
+.portrait-wrap td:nth-child(2) { text-align:left; position:sticky; left:0; background:#191c20; }
+.portrait-wrap tr:hover td { background:#294565; }
+.portrait-wrap button { background:none; color:inherit; border:0; cursor:pointer; font:inherit; }
+.portrait-wrap .up { color:#f3414b; } .portrait-wrap .down { color:#21b578; }
+.portrait-wrap small { display:block; color:#9faab7; font-size:11px; }
+.portrait-wrap .tags { max-width:140px; overflow:hidden; text-overflow:ellipsis; text-align:left; }
+@media(max-width:600px) { .portrait-wrap td,.portrait-wrap th { padding:8px 5px; font-size:13px; } .portrait-wrap .tags { max-width:65px; } }
 </style>
 </head>
 <body>
@@ -338,6 +349,7 @@
     </div>
     <div class="list-tabs" id="listTabs"></div>
     <div class="view-controls">
+      <button class="btn" id="portraitToggle" onclick="togglePortrait()">竖屏一览</button>
       <input type="text" id="filterText" placeholder="搜索代码 / 名称 / 计划 / 复盘">
       <select id="filterStatus">
         <option value="all">全部股票</option>
@@ -388,6 +400,7 @@
       </div>
       <div class="hint">持仓个股会自动进入股票池；清仓后保留在股票池并显示为观察。</div>
     </div>
+    <div id="portraitTable" class="portrait-wrap" hidden></div>
     <div id="watchItems"></div>
     <div class="empty" id="watchEmpty" hidden>暂无匹配股票。</div>
   </div>
@@ -1237,6 +1250,7 @@ function fetchTencent(codes) {
           price: parseFloat(f[3]) || 0,
           prevClose: parseFloat(f[4]) || 0,
           open: parseFloat(f[5]) || 0,
+          volumeRatio: !/^hk/.test(code) && f[49] && Number.isFinite(Number(f[49])) ? Number(f[49]) : null,
           date: dt.length >= 8 ? dt.slice(0, 4) + "-" + dt.slice(4, 6) + "-" + dt.slice(6, 8) : ""
         };
       });
@@ -1266,6 +1280,7 @@ function mergeQuotes(map) {
       price: price,
       change: prevClose ? price - prevClose : null,
       changePct: prevClose ? (price - prevClose) / prevClose * 100 : null,
+      volumeRatio: Number.isFinite(n.volumeRatio) ? n.volumeRatio : null,
       date: n.date || (n.time ? tsToLocalDateStr(n.time) : (old.date || ""))
     };
   }
@@ -1501,6 +1516,36 @@ function renderListSelectOptions(select, includePool) {
   });
 }
 
+let portraitMode = false, portraitSort = 'changePct', portraitDirection = -1;
+function togglePortrait() {
+  portraitMode = !portraitMode;
+  try { localStorage.setItem('ashare_portrait', String(portraitMode)); } catch(e) {}
+  renderWatchlists();
+}
+function sortPortrait(key) {
+  portraitDirection = portraitSort === key ? -portraitDirection : -1;
+  portraitSort = key;
+  renderWatchlists();
+}
+function portraitValue(row, key) {
+  if (key === 'volumeRatio' || key === 'change') return row.q ? row.q[key] : null;
+  return row[key];
+}
+function comparePortrait(a,b) {
+  const x = portraitValue(a,portraitSort), y = portraitValue(b,portraitSort);
+  if (x == null && y == null) return a.code.localeCompare(b.code);
+  if (x == null) return 1;
+  if (y == null) return -1;
+  return (typeof x === 'string' ? x.localeCompare(y,'zh-CN') : x-y) * portraitDirection || a.code.localeCompare(b.code);
+}
+function renderPortrait(rows) {
+  const columns = [['name','名称 / 代码'],['changePct','涨幅%'],['price','现价'],['volumeRatio','量比'],['change','涨跌']];
+  const header = '<tr><th>#</th>' + columns.map(function(c) { return '<th><button onclick="sortPortrait(\''+c[0]+'\')">'+c[1]+(portraitSort===c[0] ? (portraitDirection===1?' ↑':' ↓'):'')+'</button></th>'; }).join('') + '<th>标签</th></tr>';
+  $('portraitTable').innerHTML = '<table><thead>'+header+'</thead><tbody>'+rows.slice().sort(comparePortrait).map(function(r,i) {
+    const q=r.q||{}, digits=/^hk/.test(r.code)?3:2;
+    return '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(r.name)+'<small>'+escapeHtml(r.code.toUpperCase())+'</small></td><td class="'+pnlClass(r.changePct)+'">'+fmtSigned(r.changePct)+'%</td><td class="'+pnlClass(r.changePct)+'">'+fmt(r.price,digits)+'</td><td>'+fmt(q.volumeRatio)+'</td><td class="'+pnlClass(q.change)+'">'+fmtSigned(q.change,digits)+'</td><td class="tags" title="'+escapeHtml(r.tags.join(' / '))+'">'+escapeHtml(r.tags.join(' / '))+'</td></tr>';
+  }).join('')+'</tbody></table>';
+}
 function renderWatchlists() {
   ensureStateShape();
   if (activeListId !== "pool" && !findList(activeListId)) activeListId = "pool";
@@ -1532,6 +1577,11 @@ function renderWatchlists() {
 
   const noteDate = activeNoteDate || localDateStr();
   const rows = buildStockCards(noteDate);
+  try { portraitMode = localStorage.getItem('ashare_portrait') === 'true'; } catch(e) {}
+  $('portraitTable').hidden = !portraitMode;
+  $('watchItems').hidden = portraitMode;
+  $('portraitToggle').textContent = portraitMode ? '返回卡片' : '竖屏一览';
+  if (portraitMode) renderPortrait(rows.filtered);
   $("watchCount").textContent = rows.filtered.length + " / " + rows.total + " 只";
   $("watchEmpty").hidden = rows.filtered.length > 0;
   $("loadingTip").hidden = firstQuoteLoaded || rows.total === 0;

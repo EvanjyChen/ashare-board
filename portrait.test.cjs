@@ -1,0 +1,10 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const html=fs.readFileSync(__dirname+'/index.html','utf8');
+const ctx=vm.createContext({});
+vm.runInContext(html.slice(html.indexOf('let portraitMode'),html.indexOf('function renderWatchlists()')),ctx);
+const rows=[{code:'a',q:{volumeRatio:0.5}},{code:'b',q:{volumeRatio:2}},{code:'c',q:{volumeRatio:null}}];
+vm.runInContext("portraitSort='volumeRatio';portraitDirection=-1",ctx);
+assert.deepEqual(rows.slice().sort(ctx.comparePortrait).map(r=>r.code),['b','a','c']);
+vm.runInContext('portraitDirection=1',ctx);
+assert.deepEqual(rows.slice().sort(ctx.comparePortrait).map(r=>r.code),['a','b','c']);
+console.log('PASS: volume ratio ascending/descending, missing values last');
