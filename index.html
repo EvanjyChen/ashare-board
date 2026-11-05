@@ -951,6 +951,8 @@ function addRow(data) {
   div.querySelector(".del-btn").addEventListener("click", function () {
     div.remove();
     syncStateFromForm();
+    saveLocal();
+    renderAll();
     refreshQuotes(); // 持仓变化立即刷新
   });
   // 输入变化实时同步 state 并保存
@@ -958,6 +960,7 @@ function addRow(data) {
     inp.addEventListener("input", function () {
       syncStateFromForm();
       saveLocal();
+      renderAll();
     });
     // 代码输入失焦后规范化为 6 位数字，并立即拉一次行情（自动补名称）
     if (inp.classList.contains("r-code")) {
@@ -1522,6 +1525,7 @@ function renderListSelectOptions(select, includePool) {
 
 let portraitMode = false, portraitSort = 'changePct', portraitDirection = -1;
 function togglePortrait() {
+  if (MODE === 'edit') syncStateFromForm();
   portraitMode = !portraitMode;
   try { localStorage.setItem('ashare_portrait', String(portraitMode)); } catch(e) {}
   renderWatchlists();
@@ -1543,9 +1547,9 @@ function comparePortrait(a,b) {
   return (typeof x === 'string' ? x.localeCompare(y,'zh-CN') : x-y) * portraitDirection || a.code.localeCompare(b.code);
 }
 function currentPortraitRows() {
-  return calc().items.filter(function(it) { return Number(it.row.qty) > 0; }).map(function(it) {
+  return calc().items.filter(function(it) { return Number.isFinite(Number(it.row.qty)) && Number(it.row.qty) > 0; }).map(function(it) {
     return { code:it.row.code, name:getStockName(it.row.code)||'未知', tags:getStockTags(it.row.code), q:it.q,
-      price:it.price, changePct:it.q ? it.q.changePct : null, value:it.value, pnl:it.pnl, pnlPct:it.pnlPct, dayPnl:it.dayPnl };
+      qty:Number(it.row.qty), price:it.price, changePct:it.q ? it.q.changePct : null, value:it.value, pnl:it.pnl, pnlPct:it.pnlPct, dayPnl:it.dayPnl };
   });
 }
 function renderPortrait(rows) {
@@ -1553,7 +1557,7 @@ function renderPortrait(rows) {
   const header = '<tr><th>#</th>' + columns.map(function(c) { return '<th><button onclick="sortPortrait(\''+c[0]+'\')">'+c[1]+(portraitSort===c[0] ? (portraitDirection===1?' ↑':' ↓'):'')+'</button></th>'; }).join('') + '<th>标签</th></tr>';
   $('portraitTable').innerHTML = '<table><thead>'+header+'</thead><tbody>'+rows.slice().sort(comparePortrait).map(function(r,i) {
     const q=r.q||{}, digits=/^hk/.test(r.code)?3:2;
-    return '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(r.name)+'<small>'+escapeHtml(r.code.toUpperCase())+'</small></td><td class="'+pnlClass(r.changePct)+'">'+fmtSigned(r.changePct)+'%</td><td class="'+pnlClass(r.changePct)+'">'+fmt(r.price,digits)+'</td><td>'+fmt(q.volumeRatio)+'</td><td>'+fmt(r.value)+'</td><td class="'+pnlClass(r.pnl)+'">'+fmtSigned(r.pnl)+'</td><td class="'+pnlClass(r.pnlPct)+'">'+fmtSigned(r.pnlPct)+(r.pnlPct == null?'':'%')+'</td><td class="'+pnlClass(r.dayPnl)+'">'+fmtSigned(r.dayPnl)+'</td><td class="'+pnlClass(q.change)+'">'+fmtSigned(q.change,digits)+'</td><td class="tags" title="'+escapeHtml(r.tags.join(' / '))+'">'+escapeHtml(r.tags.join(' / '))+'</td></tr>';
+    return '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(r.name)+'<small>'+escapeHtml(r.code.toUpperCase())+'</small><small>持仓 '+fmt(r.qty,0)+' 股</small></td><td class="'+pnlClass(r.changePct)+'">'+fmtSigned(r.changePct)+'%</td><td class="'+pnlClass(r.changePct)+'">'+fmt(r.price,digits)+'</td><td>'+fmt(q.volumeRatio)+'</td><td>'+fmt(r.value)+'</td><td class="'+pnlClass(r.pnl)+'">'+fmtSigned(r.pnl)+'</td><td class="'+pnlClass(r.pnlPct)+'">'+fmtSigned(r.pnlPct)+(r.pnlPct == null?'':'%')+'</td><td class="'+pnlClass(r.dayPnl)+'">'+fmtSigned(r.dayPnl)+'</td><td class="'+pnlClass(q.change)+'">'+fmtSigned(q.change,digits)+'</td><td class="tags" title="'+escapeHtml(r.tags.join(' / '))+'">'+escapeHtml(r.tags.join(' / '))+'</td></tr>';
   }).join('')+'</tbody></table>' + (rows.length ? '' : '<div class="empty">暂无当前持仓</div>');
 }
 function renderWatchlists() {
