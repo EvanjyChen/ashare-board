@@ -840,6 +840,12 @@ function noteFor(code, date) {
   return state.notes[code][date];
 }
 
+let remoteSnapshots = [];
+function cleanSnapshots(records) {
+  return (Array.isArray(records) ? records : []).filter(function(s) {
+    return s && /^\d{4}-\d{2}-\d{2}$/.test(s.date) && Number.isFinite(s.stockValue) && Number.isFinite(s.cash);
+  }).map(function(s) { return {date:s.date,stockValue:s.stockValue,cash:s.cash,isClose:s.isClose===true}; }).slice(-CONFIG.MAX_SNAPSHOTS);
+}
 function applyBoardData(d) {
   state.cash = Number(d && d.cash) || 0;
   state.rows = (d && Array.isArray(d.rows) ? d.rows : []).map(normalizeHoldingRow).filter(function (r) { return !!r.code; });
@@ -847,6 +853,8 @@ function applyBoardData(d) {
   state.pool = (d && Array.isArray(d.pool) ? d.pool : []).map(normalizeStockItem).filter(Boolean);
   state.notes = (d && d.notes && typeof d.notes === "object") ? d.notes : {};
   state.txs = (d && Array.isArray(d.txs) ? d.txs : []).map(normalizeTx).filter(Boolean);
+  remoteSnapshots = cleanSnapshots(d && d.snapshots);
+  if (MODE === 'edit' && d && Array.isArray(d.snapshots)) saveSnapshots(remoteSnapshots);
   ensureStateShape();
 }
 
@@ -858,11 +866,13 @@ function boardDataPayload() {
     lists: state.lists,
     pool: state.pool,
     notes: state.notes,
-    txs: state.txs
+    txs: state.txs,
+    snapshots: cleanSnapshots(loadSnapshots())
   };
 }
 
 function loadSnapshots() {
+  if (MODE === 'board') return remoteSnapshots.slice();
   try {
     const raw = localStorage.getItem(CONFIG.LS_SNAPSHOTS);
     const arr = raw ? JSON.parse(raw) : [];
@@ -1031,14 +1041,13 @@ function loadTx() {
   } catch (e) { return []; }
 }
 function logTx(tx) {
+  if (!tx.time) tx.time = new Date().toISOString();
+  const arr = (state.txs || []).slice();
+  arr.push(tx);
+  state.txs = arr.map(normalizeTx).filter(Boolean);
   try {
-    const arr = loadTx();
-    if (!tx.time) tx.time = new Date().toISOString();
-    arr.push(tx);
-    const sliced = arr.slice(-500);
-    localStorage.setItem(CONFIG.LS_TX, JSON.stringify(sliced));
-    state.txs = sliced.map(normalizeTx).filter(Boolean);
-  } catch (e) {}
+    localStorage.setItem(CONFIG.LS_TX, JSON.stringify(state.txs));
+  } catch (e) { toast('本机交易记录保存失败，请立即同步云端并检查浏览器存储空间'); }
 }
 
 function tradeDateStr() {
@@ -1493,6 +1502,14 @@ function renderOverview() {
   const tp = $("todayPnl");
   tp.textContent = c.todayPnl === null ? "--" : fmtSigned(c.todayPnl);
   tp.title = "当前人民币总资产－上一有效收盘总资产－期间转入＋期间转出。缺少收盘基准时显示 --。";
+  let detail=$('pnlCalculation');
+  if (!detail) { detail=document.createElement('div'); detail.id='pnlCalculation'; detail.style.cssText='font-size:12px;line-height:1.6;margin-top:8px;overflow-wrap:anywhere'; tp.parentNode.appendChild(detail); }
+  const baseline=loadSnapshots().filter(function(s){return s.isClose===true && s.date<chinaDate() && Number.isFinite(s.stockValue) && Number.isFinite(s.cash);}).sort(function(a,b){return b.date.localeCompare(a.date);})[0];
+  if (baseline) {
+    const incoming=netExternalFlow((state.txs||[]).filter(function(tx){return tx.type==='转入';}),baseline.date,chinaDate());
+    const outgoing=-netExternalFlow((state.txs||[]).filter(function(tx){return tx.type==='转出';}),baseline.date,chinaDate());
+    detail.textContent='总资产 '+fmt(c.totalAsset)+' − '+baseline.date+' 基准 '+fmt(baseline.stockValue+baseline.cash)+' − 转入 '+fmt(incoming)+' + 转出 '+fmt(outgoing)+' = '+fmtSigned(c.todayPnl)+' 元（北京时间）';
+  } else detail.textContent='缺少上一有效收盘基准，暂无法计算今日盈亏。';
   tp.className = "v " + pnlClass(c.todayPnl);
 
   const ap = $("totalPnl");
@@ -1974,6 +1991,7 @@ function localDateStr() {
 
 // 每日 15:30 后或首次打开页面时，若当日无快照则记录（日期优先取行情日期）
 function maybeSnapshot() {
+  if (MODE !== 'edit') return; // 只读设备不得生成与编辑端不同的收盘基准
   const c = calc();
   if (!Number.isFinite(c.totalAsset)) return;
   if (!state.rows.length) return;
@@ -1994,6 +2012,7 @@ function maybeSnapshot() {
     if (oldIndex >= 0) snaps.splice(oldIndex, 1);
     snaps.push({ date: today, stockValue: Math.round(c.stockValue * 100) / 100, cash: c.cash, isClose: true });
     saveSnapshots(snaps);
+    schedulePush();
     renderHistory();
   }
 }
@@ -2309,6 +2328,7 @@ async function pullState() {
     applyBoardData(obj);
     saveBoardCache(boardMeta.boardId, obj);
     savePullBackoff(0);
+    renderHistory();
     renderAll();
     refreshQuotes(); // 持仓可能变化，立即拉价
   } catch (e) {

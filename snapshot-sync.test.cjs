@@ -1,0 +1,16 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const html=fs.readFileSync(__dirname+'/index.html','utf8');
+const memory=new Map();
+const c=vm.createContext({state:{},MODE:'edit',CONFIG:{MAX_SNAPSHOTS:365,LS_SNAPSHOTS:'snapshots'},ensureStateShape(){},normalizeHoldingRow:x=>x,normalizeList:x=>x,normalizeStockItem:x=>x,normalizeTx:x=>x,localStorage:{getItem:k=>memory.get(k),setItem:(k,v)=>memory.set(k,v)}});
+vm.runInContext(html.slice(html.indexOf('let remoteSnapshots'),html.indexOf('function applyTheme(')),c);
+c.saveSnapshots([{date:'2026-11-04',cash:100,stockValue:200,isClose:true}]);
+const payload=c.boardDataPayload();
+assert.equal(payload.snapshots.length,1);
+c.MODE='board';
+c.applyBoardData(payload);
+assert.equal(c.loadSnapshots()[0].cash,100);
+memory.set('snapshots',JSON.stringify([{date:'2026-11-04',cash:999,stockValue:0,isClose:true}]));
+assert.equal(c.loadSnapshots()[0].cash,100);
+c.applyBoardData({cash:100,rows:[]});
+assert.equal(c.loadSnapshots().length,0);
+console.log('PASS: snapshots uploaded, remote baseline used, device-local baseline ignored, legacy payload has no fabricated baseline');
