@@ -1378,7 +1378,11 @@ function isTodayStockTrade(tx) {
 function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
   if (!Number.isFinite(currentQty) || currentQty < 0 || !Number.isFinite(currentPrice) || currentPrice <= 0) return null;
   let buyQty = 0, sellQty = 0, buyAmount = 0, sellAmount = 0;
-  const txs = (state.txs || []).filter(function(tx) { return isTodayStockTrade(tx) && normalizeCode(tx.code) === code; });
+  const today = chinaDate();
+  const txs = (state.txs || []).filter(function(tx) {
+    return tx && (tx.type === '买入' || tx.type === '卖出') &&
+      (tx.tradeDate || String(tx.time || '').slice(0, 10)) === today && normalizeCode(tx.code) === code;
+  });
   for (const tx of txs) {
     const qty = Number(tx.qty), price = Number(tx.price);
     if (!(qty > 0) || !Number.isFinite(qty) || !(price > 0) || !Number.isFinite(price)) return null;
@@ -1398,8 +1402,10 @@ function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
  * =================================================================== */
 let hkdCny = null;
 function currencyRate(code) { return /^hk/.test(code) ? hkdCny : 1; }
+let chinaDateFormatter;
 function chinaDate() {
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  if (!chinaDateFormatter) chinaDateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' });
+  return chinaDateFormatter.format(new Date());
 }
 function netExternalFlow(txs, fromDate, toDate) {
   return (txs || []).reduce(function(sum,tx) {
@@ -1422,7 +1428,9 @@ function calc() {
   let todayPnl = 0;     // 今日盈亏按当日交易批次计算：昨仓以昨收为基准，今日买入以买入价为基准
   let todayComplete = true;
   const today = chinaDate();
-  const dayCodes = new Set((state.txs || []).filter(isTodayStockTrade).map(function(tx) { return normalizeCode(tx.code); }));
+  const dayCodes = new Set((state.txs || []).filter(function(tx) {
+    return tx && (tx.type === '买入' || tx.type === '卖出') && (tx.tradeDate || String(tx.time || '').slice(0, 10)) === today;
+  }).map(function(tx) { return normalizeCode(tx.code); }));
   const calculationRows = state.rows.slice();
   dayCodes.forEach(function(code) {
     if (code && !calculationRows.some(function(r) { return r.code === code; })) calculationRows.push({code:code,qty:0,cost:0});
