@@ -2005,20 +2005,22 @@ function navHistory(records, startDate) {
   });
 }
 function exportNavHistory() {
-  const start=latestTransferDate(state.txs || []);
-  if (!start) { toast('没有有效转入或转出记录，无法确定统计起点'); return; }
+  const start='2026-10-08';
   const rows=navHistory(loadSnapshots(),start);
+  if (!rows.length || rows[0].date !== start) { toast('缺少 2026-10-08 收盘基准，请先提供当天现金和持仓'); return; }
   if (!rows.length) { toast('暂无有效收盘记录'); return; }
   const csv='\uFEFF日期,股票市值,现金,净资产,变化金额,变化率%,基准日期\r\n'+rows.map(function(s) { return [s.date,s.stockValue,s.cash,s.total,s.delta,s.pct,s.baseDate].join(','); }).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   const a=document.createElement('a'); a.href=url; a.download='每日净值变化.csv'; a.click(); setTimeout(function(){URL.revokeObjectURL(url);},1000);
 }
 function renderHistory() {
-  const start=latestTransferDate(state.txs || []);
-  const snaps = start ? navHistory(loadSnapshots(),start) : [];
+  const start='2026-10-08';
+  const records=navHistory(loadSnapshots(),start);
+  const hasBaseline=records.length > 0 && records[0].date === start;
+  const snaps = hasBaseline ? records : [];
   const first=snaps[0], last=snaps[snaps.length-1];
   $('navSummary').textContent = last ? '有效记录 '+snaps.length+' 天 · 最新净资产 ¥'+fmt(last.total)+' · 最新变化 '+fmtSigned(last.delta)+' 元 · 区间变化 '+(snaps.length > 1 ? fmtSigned(last.total-first.total)+' 元' : '--') : '尚无有效收盘净值';
-  $('navSummary').textContent = (start ? '统计起点：'+start+'（最近一次转入/转出） · ' : '未找到转入/转出记录 · ') + $('navSummary').textContent;
+  $('navSummary').textContent = '固定基准：2026-10-08 收盘；10-09 起计算变化 · ' + (hasBaseline ? $('navSummary').textContent : '缺少基准日现金和持仓数据，暂不计算历史变化。');
   const tbody = $("historyRows");
   tbody.innerHTML = "";
   $("historyEmpty").hidden = snaps.length > 0;
