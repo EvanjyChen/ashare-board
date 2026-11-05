@@ -412,19 +412,22 @@
   <!-- 历史净值（可展开） -->
   <div class="card">
     <button class="history-toggle" id="historyToggle">
-      <span>📊 历史净值</span><span id="historyArrow">▼</span>
+      <span>📊 每日净值变化</span><span id="historyArrow">▼</span>
     </button>
     <div class="history-body" id="historyBody">
+      <div id="navSummary" class="day-summary"></div>
+      <div class="hint">人民币净资产＝股票市值＋现金；变化额及变化率与上一条有效收盘记录比较，包含资金转入转出。缺失日期不补造数据。</div>
+      <button class="btn" onclick="exportNavHistory()">导出每日统计 CSV</button>
       <canvas id="chart"></canvas>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>日期</th><th>股票市值</th><th>现金</th><th>总资产</th><th>日收益</th><th>日收益率</th></tr>
+            <tr><th>日期</th><th>股票市值</th><th>现金</th><th>净资产</th><th>较上次变化</th><th>变化率</th><th>比较基准日</th></tr>
           </thead>
           <tbody id="historyRows"></tbody>
         </table>
       </div>
-      <div class="hint" id="historyEmpty" hidden>暂无历史快照。每日 15:30 后（或当日首次打开）会自动记录一次。</div>
+      <div class="hint" id="historyEmpty" hidden>暂无有效收盘记录。需在北京时间 16:00 后（含港股时 17:00 后）打开页面并成功刷新当日行情。关闭页面不会自动记录，旧版盘中快照不纳入统计。</div>
     </div>
   </div>
 
@@ -1986,8 +1989,26 @@ function maybeSnapshot() {
   }
 }
 
+function navHistory(records) {
+  const byDate = new Map();
+  records.filter(function(s) { return s.isClose === true && /^\d{4}-\d{2}-\d{2}$/.test(s.date) && Number.isFinite(s.stockValue) && Number.isFinite(s.cash); }).forEach(function(s) { byDate.set(s.date,s); });
+  const sorted = Array.from(byDate.values()).sort(function(a,b) { return a.date.localeCompare(b.date); });
+  return sorted.map(function(s,i) {
+    const total=s.stockValue+s.cash, prev=i ? sorted[i-1] : null, base=prev ? prev.stockValue+prev.cash : null;
+    return Object.assign({},s,{total:total, delta:base === null ? null : total-base, pct:base > 0 ? (total-base)/base*100 : null, baseDate:prev ? prev.date : ''});
+  });
+}
+function exportNavHistory() {
+  const rows=navHistory(loadSnapshots());
+  if (!rows.length) { toast('暂无有效收盘记录'); return; }
+  const csv='\uFEFF日期,股票市值,现金,净资产,变化金额,变化率%,基准日期\r\n'+rows.map(function(s) { return [s.date,s.stockValue,s.cash,s.total,s.delta,s.pct,s.baseDate].join(','); }).join('\r\n');
+  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
+  const a=document.createElement('a'); a.href=url; a.download='每日净值变化.csv'; a.click(); setTimeout(function(){URL.revokeObjectURL(url);},1000);
+}
 function renderHistory() {
-  const snaps = loadSnapshots().sort(function (a, b) { return a.date < b.date ? -1 : 1; });
+  const snaps = navHistory(loadSnapshots());
+  const first=snaps[0], last=snaps[snaps.length-1];
+  $('navSummary').textContent = last ? '有效记录 '+snaps.length+' 天 · 最新净资产 ¥'+fmt(last.total)+' · 最新变化 '+fmtSigned(last.delta)+' 元 · 区间变化 '+(snaps.length > 1 ? fmtSigned(last.total-first.total)+' 元' : '--') : '尚无有效收盘净值';
   const tbody = $("historyRows");
   tbody.innerHTML = "";
   $("historyEmpty").hidden = snaps.length > 0;
@@ -1995,9 +2016,8 @@ function renderHistory() {
   // 列表：最新在前；日收益 = 今日市值 - 昨日市值（不受现金变化影响）
   for (let i = snaps.length - 1; i >= 0; i--) {
     const s = snaps[i];
-    const prev = i > 0 ? snaps[i - 1] : null;
-    const dayPnl = prev ? (s.stockValue + s.cash) - (prev.stockValue + prev.cash) : null;
-    const dayPct = (prev && prev.stockValue + prev.cash > 0) ? dayPnl / (prev.stockValue + prev.cash) * 100 : null;
+    const dayPnl = s.delta;
+    const dayPct = s.pct;
     const tr = document.createElement("tr");
     tr.innerHTML =
       "<td>" + escapeHtml(s.date) + "</td>" +
@@ -2005,7 +2025,7 @@ function renderHistory() {
       "<td>" + fmt(s.cash) + "</td>" +
       "<td>" + fmt(s.stockValue + s.cash) + "</td>" +
       '<td class="' + pnlClass(dayPnl) + '">' + (dayPnl !== null ? fmtSigned(dayPnl) : "--") + "</td>" +
-      '<td class="' + pnlClass(dayPct) + '">' + (dayPct !== null ? fmtSigned(dayPct) + "%" : "--") + "</td>";
+      '<td class="' + pnlClass(dayPct) + '">' + (dayPct !== null ? fmtSigned(dayPct) + "%" : "--") + "</td><td>"+escapeHtml(s.baseDate || '--')+"</td>";
     tbody.appendChild(tr);
   }
   drawChart(snaps);
@@ -2024,7 +2044,7 @@ function drawChart(snaps) {
   ctx.clearRect(0, 0, w, h);
   if (snaps.length < 2) return;
 
-  const vals = snaps.map(function (s) { return s.stockValue; });
+  const vals = snaps.map(function (s) { return s.stockValue + s.cash; });
   const min = Math.min.apply(null, vals), max = Math.max.apply(null, vals);
   const pad = { l: 8, r: 8, t: 14, b: 14 };
   const iw = w - pad.l - pad.r, ih = h - pad.t - pad.b;
