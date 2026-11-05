@@ -1989,9 +1989,15 @@ function maybeSnapshot() {
   }
 }
 
-function navHistory(records) {
+function latestTransferDate(txs) {
+  const dates = txs.filter(function(tx) { return tx && (tx.type === '转入' || tx.type === '转出') && Number(tx.amount)>0 && Number.isFinite(Date.parse(tx.time)); }).map(function(tx) {
+    return new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(tx.time));
+  });
+  return dates.sort().pop() || '';
+}
+function navHistory(records, startDate) {
   const byDate = new Map();
-  records.filter(function(s) { return s.isClose === true && /^\d{4}-\d{2}-\d{2}$/.test(s.date) && Number.isFinite(s.stockValue) && Number.isFinite(s.cash); }).forEach(function(s) { byDate.set(s.date,s); });
+  records.filter(function(s) { return (!startDate || s.date >= startDate) && s.isClose === true && /^\d{4}-\d{2}-\d{2}$/.test(s.date) && Number.isFinite(s.stockValue) && Number.isFinite(s.cash); }).forEach(function(s) { byDate.set(s.date,s); });
   const sorted = Array.from(byDate.values()).sort(function(a,b) { return a.date.localeCompare(b.date); });
   return sorted.map(function(s,i) {
     const total=s.stockValue+s.cash, prev=i ? sorted[i-1] : null, base=prev ? prev.stockValue+prev.cash : null;
@@ -1999,16 +2005,20 @@ function navHistory(records) {
   });
 }
 function exportNavHistory() {
-  const rows=navHistory(loadSnapshots());
+  const start=latestTransferDate(state.txs || []);
+  if (!start) { toast('没有有效转入或转出记录，无法确定统计起点'); return; }
+  const rows=navHistory(loadSnapshots(),start);
   if (!rows.length) { toast('暂无有效收盘记录'); return; }
   const csv='\uFEFF日期,股票市值,现金,净资产,变化金额,变化率%,基准日期\r\n'+rows.map(function(s) { return [s.date,s.stockValue,s.cash,s.total,s.delta,s.pct,s.baseDate].join(','); }).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
   const a=document.createElement('a'); a.href=url; a.download='每日净值变化.csv'; a.click(); setTimeout(function(){URL.revokeObjectURL(url);},1000);
 }
 function renderHistory() {
-  const snaps = navHistory(loadSnapshots());
+  const start=latestTransferDate(state.txs || []);
+  const snaps = start ? navHistory(loadSnapshots(),start) : [];
   const first=snaps[0], last=snaps[snaps.length-1];
   $('navSummary').textContent = last ? '有效记录 '+snaps.length+' 天 · 最新净资产 ¥'+fmt(last.total)+' · 最新变化 '+fmtSigned(last.delta)+' 元 · 区间变化 '+(snaps.length > 1 ? fmtSigned(last.total-first.total)+' 元' : '--') : '尚无有效收盘净值';
+  $('navSummary').textContent = (start ? '统计起点：'+start+'（最近一次转入/转出） · ' : '未找到转入/转出记录 · ') + $('navSummary').textContent;
   const tbody = $("historyRows");
   tbody.innerHTML = "";
   $("historyEmpty").hidden = snaps.length > 0;
