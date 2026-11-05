@@ -1,5 +1,6 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const html=fs.readFileSync(__dirname+'/index.html','utf8'), ctx=vm.createContext({});
+vm.runInContext(html.slice(html.indexOf('function netExternalFlow('),html.indexOf('function assetDayPnl(')),ctx);
 vm.runInContext(html.slice(html.indexOf('function latestTransferDate('),html.indexOf('function exportNavHistory(')),ctx);
 assert.equal(ctx.latestTransferDate([{type:'转入',amount:100,time:'2026-10-08T08:00:00Z'},{type:'转出',amount:20,time:'2026-10-10T18:00:00Z'},{type:'买入',amount:10,time:'2026-11-01T08:00:00Z'}]),'2026-10-11');
 assert.equal(ctx.latestTransferDate([]),'');

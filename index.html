@@ -416,13 +416,13 @@
     </button>
     <div class="history-body" id="historyBody">
       <div id="navSummary" class="day-summary"></div>
-      <div class="hint">人民币净资产＝股票市值＋现金；变化额及变化率与上一条有效收盘记录比较，包含资金转入转出。缺失日期不补造数据。</div>
+      <div class="hint">人民币净资产＝股票市值＋现金；盈亏＝净资产差额－转入＋转出，收益率以基准日净资产为分母。与上一条有效收盘记录比较，缺失日期不补造数据。曲线为实际净资产，含资金流。</div>
       <button class="btn" onclick="exportNavHistory()">导出每日统计 CSV</button>
       <canvas id="chart"></canvas>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>日期</th><th>股票市值</th><th>现金</th><th>净资产</th><th>较上次变化</th><th>变化率</th><th>比较基准日</th></tr>
+            <tr><th>日期</th><th>股票市值</th><th>现金</th><th>净资产</th><th>盈亏（剔除转账）</th><th>收益率</th><th>比较基准日</th></tr>
           </thead>
           <tbody id="historyRows"></tbody>
         </table>
@@ -1417,11 +1417,20 @@ function currencyRate(code) { return /^hk/.test(code) ? hkdCny : 1; }
 function chinaDate() {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
 }
-function assetDayPnl(totalAsset, snapshots, today) {
+function netExternalFlow(txs, fromDate, toDate) {
+  return (txs || []).reduce(function(sum,tx) {
+    if (!tx || (tx.type !== '转入' && tx.type !== '转出')) return sum;
+    const amount=Number(tx.amount), time=Date.parse(tx.time);
+    if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(time)) return sum;
+    const date=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(time));
+    return date > fromDate && date <= toDate ? sum + (tx.type === '转入' ? amount : -amount) : sum;
+  },0);
+}
+function assetDayPnl(totalAsset, snapshots, today, txs) {
   const prior = snapshots.filter(function (s) {
     return s.isClose === true && s.date < today && Number.isFinite(s.stockValue) && Number.isFinite(s.cash);
   }).sort(function (a, b) { return b.date.localeCompare(a.date); })[0];
-  return prior && Number.isFinite(totalAsset) ? totalAsset - (prior.stockValue + prior.cash) : null;
+  return prior && Number.isFinite(totalAsset) ? totalAsset - (prior.stockValue + prior.cash) - netExternalFlow(txs,prior.date,today) : null;
 }
 function calc() {
   let stockValue = 0;   // 股票总市值 = Σ(当前价 × 数量)
@@ -1461,7 +1470,7 @@ function calc() {
     stockCost: stockCost,
     cash: state.cash,
     totalAsset: stockValue + state.cash,                          // 总资产 = 股票市值 + 现金
-    todayPnl: assetDayPnl(stockValue + state.cash, loadSnapshots(), chinaDate()),
+    todayPnl: assetDayPnl(stockValue + state.cash, loadSnapshots(), chinaDate(), state.txs),
     totalPnl: Number.isFinite(stockValue) ? totalPnl : null,
     totalPnlPct: totalPnlPct
   };
@@ -1483,7 +1492,7 @@ function renderOverview() {
 
   const tp = $("todayPnl");
   tp.textContent = c.todayPnl === null ? "--" : fmtSigned(c.todayPnl);
-  tp.title = "当前人民币总资产减最近一次已记录的收盘总资产；含资金转入转出。缺少收盘基准时显示 --。";
+  tp.title = "当前人民币总资产－上一有效收盘总资产－期间转入＋期间转出。缺少收盘基准时显示 --。";
   tp.className = "v " + pnlClass(c.todayPnl);
 
   const ap = $("totalPnl");
@@ -1995,18 +2004,20 @@ function latestTransferDate(txs) {
   });
   return dates.sort().pop() || '';
 }
-function navHistory(records, startDate) {
+function navHistory(records, startDate, txs) {
   const byDate = new Map();
   records.filter(function(s) { return (!startDate || s.date >= startDate) && s.isClose === true && /^\d{4}-\d{2}-\d{2}$/.test(s.date) && Number.isFinite(s.stockValue) && Number.isFinite(s.cash); }).forEach(function(s) { byDate.set(s.date,s); });
   const sorted = Array.from(byDate.values()).sort(function(a,b) { return a.date.localeCompare(b.date); });
   return sorted.map(function(s,i) {
     const total=s.stockValue+s.cash, prev=i ? sorted[i-1] : null, base=prev ? prev.stockValue+prev.cash : null;
-    return Object.assign({},s,{total:total, delta:base === null ? null : total-base, pct:base > 0 ? (total-base)/base*100 : null, baseDate:prev ? prev.date : ''});
+    const flow=prev ? netExternalFlow(txs,prev.date,s.date) : 0;
+    const delta=base === null ? null : total-base-flow;
+    return Object.assign({},s,{total:total, delta:delta, pct:base > 0 ? delta/base*100 : null, baseDate:prev ? prev.date : ''});
   });
 }
 function exportNavHistory() {
   const start='2026-10-08';
-  const rows=navHistory(loadSnapshots(),start);
+  const rows=navHistory(loadSnapshots(),start,state.txs);
   if (!rows.length || rows[0].date !== start) { toast('缺少 2026-10-08 收盘基准，请先提供当天现金和持仓'); return; }
   if (!rows.length) { toast('暂无有效收盘记录'); return; }
   const csv='\uFEFF日期,股票市值,现金,净资产,变化金额,变化率%,基准日期\r\n'+rows.map(function(s) { return [s.date,s.stockValue,s.cash,s.total,s.delta,s.pct,s.baseDate].join(','); }).join('\r\n');
@@ -2015,11 +2026,11 @@ function exportNavHistory() {
 }
 function renderHistory() {
   const start='2026-10-08';
-  const records=navHistory(loadSnapshots(),start);
+  const records=navHistory(loadSnapshots(),start,state.txs);
   const hasBaseline=records.length > 0 && records[0].date === start;
   const snaps = hasBaseline ? records : [];
   const first=snaps[0], last=snaps[snaps.length-1];
-  $('navSummary').textContent = last ? '有效记录 '+snaps.length+' 天 · 最新净资产 ¥'+fmt(last.total)+' · 最新变化 '+fmtSigned(last.delta)+' 元 · 区间变化 '+(snaps.length > 1 ? fmtSigned(last.total-first.total)+' 元' : '--') : '尚无有效收盘净值';
+  $('navSummary').textContent = last ? '有效记录 '+snaps.length+' 天 · 最新净资产 ¥'+fmt(last.total)+' · 最新盈亏 '+fmtSigned(last.delta)+' 元 · 区间盈亏 '+(snaps.length > 1 ? fmtSigned(last.total-first.total-netExternalFlow(state.txs,first.date,last.date))+' 元' : '--') : '尚无有效收盘净值';
   $('navSummary').textContent = '固定基准：2026-10-08 收盘；10-09 起计算变化 · ' + (hasBaseline ? $('navSummary').textContent : '缺少基准日现金和持仓数据，暂不计算历史变化。');
   const tbody = $("historyRows");
   tbody.innerHTML = "";
