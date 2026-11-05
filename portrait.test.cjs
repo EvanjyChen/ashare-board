@@ -8,3 +8,15 @@ assert.deepEqual(rows.slice().sort(ctx.comparePortrait).map(r=>r.code),['b','a',
 vm.runInContext('portraitDirection=1',ctx);
 assert.deepEqual(rows.slice().sort(ctx.comparePortrait).map(r=>r.code),['a','b','c']);
 console.log('PASS: volume ratio ascending/descending, missing values last');
+ctx.calc=()=>({items:[{row:{code:'a',qty:10},value:100,pnl:20,pnlPct:25,dayPnl:3},{row:{code:'b',qty:0},value:0},{row:{code:'c',qty:2},value:50}]});
+ctx.getStockName=code=>code;
+ctx.getStockTags=()=>[];
+const held=ctx.currentPortraitRows();
+assert.equal(held.length,2);
+assert.equal(held[0].code,'a');
+assert.equal(held[1].code,'c');
+assert.equal(held[0].value,100);
+assert.equal(held[0].pnl,20);
+assert.equal(held[0].pnlPct,25);
+assert.equal(held[0].dayPnl,3);
+console.log('PASS: current holdings only and all valuation columns');

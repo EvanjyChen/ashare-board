@@ -265,13 +265,16 @@
   .footer-link a { color: var(--accent); text-decoration: none; }
 
   [hidden] { display: none !important; }
-.portrait-wrap { overflow:auto; max-height:80vh; background:#191c20; color:#d5dbe1; border-radius:8px; }
+.portrait-wrap { overflow:auto; max-height:80vh; max-width:100%; -webkit-overflow-scrolling:touch; touch-action:pan-x pan-y; background:#191c20; color:#d5dbe1; border-radius:8px; }
 .portrait-wrap table { width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; white-space:nowrap; }
 .portrait-wrap th { position:sticky; top:0; background:#242930; z-index:2; }
 .portrait-wrap td,.portrait-wrap th { padding:8px 10px; border:1px solid #2c323a; text-align:right; }
 .portrait-wrap td:nth-child(2) { text-align:left; position:sticky; left:0; background:#191c20; }
 .portrait-wrap tr:hover td { background:#294565; }
-.portrait-wrap button { background:none; color:inherit; border:0; cursor:pointer; font:inherit; }
+.portrait-wrap button { background:none; color:inherit; border:0; cursor:pointer; font:inherit; min-height:44px; }
+.portrait-wrap th:nth-child(2) { left:0; z-index:4; text-align:left; }
+.portrait-wrap td:nth-child(2) { z-index:1; min-width:105px; box-shadow:2px 0 4px #0004; }
+.portrait-wrap table { min-width:1080px; }
 .portrait-wrap .up { color:#f3414b; } .portrait-wrap .down { color:#21b578; }
 .portrait-wrap small { display:block; color:#9faab7; font-size:11px; }
 .portrait-wrap .tags { max-width:140px; overflow:hidden; text-overflow:ellipsis; text-align:left; }
@@ -400,7 +403,8 @@
       </div>
       <div class="hint">持仓个股会自动进入股票池；清仓后保留在股票池并显示为观察。</div>
     </div>
-    <div id="portraitTable" class="portrait-wrap" hidden></div>
+    <div id="portraitHint" class="hint" hidden>仅当前持仓 · 左右滑动查看更多，点击表头排序 · 市值及盈亏单位：人民币元</div>
+    <div id="portraitTable" class="portrait-wrap" role="region" aria-label="当前持仓一览，可左右滑动" tabindex="0" hidden></div>
     <div id="watchItems"></div>
     <div class="empty" id="watchEmpty" hidden>暂无匹配股票。</div>
   </div>
@@ -1538,13 +1542,19 @@ function comparePortrait(a,b) {
   if (y == null) return -1;
   return (typeof x === 'string' ? x.localeCompare(y,'zh-CN') : x-y) * portraitDirection || a.code.localeCompare(b.code);
 }
+function currentPortraitRows() {
+  return calc().items.filter(function(it) { return Number(it.row.qty) > 0; }).map(function(it) {
+    return { code:it.row.code, name:getStockName(it.row.code)||'未知', tags:getStockTags(it.row.code), q:it.q,
+      price:it.price, changePct:it.q ? it.q.changePct : null, value:it.value, pnl:it.pnl, pnlPct:it.pnlPct, dayPnl:it.dayPnl };
+  });
+}
 function renderPortrait(rows) {
-  const columns = [['name','名称 / 代码'],['changePct','涨幅%'],['price','现价'],['volumeRatio','量比'],['change','涨跌']];
+  const columns = [['name','名称 / 代码'],['changePct','涨幅%'],['price','现价'],['volumeRatio','量比'],['value','市值'],['pnl','累计盈亏'],['pnlPct','累计盈亏率'],['dayPnl','当日盈亏'],['change','涨跌']];
   const header = '<tr><th>#</th>' + columns.map(function(c) { return '<th><button onclick="sortPortrait(\''+c[0]+'\')">'+c[1]+(portraitSort===c[0] ? (portraitDirection===1?' ↑':' ↓'):'')+'</button></th>'; }).join('') + '<th>标签</th></tr>';
   $('portraitTable').innerHTML = '<table><thead>'+header+'</thead><tbody>'+rows.slice().sort(comparePortrait).map(function(r,i) {
     const q=r.q||{}, digits=/^hk/.test(r.code)?3:2;
-    return '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(r.name)+'<small>'+escapeHtml(r.code.toUpperCase())+'</small></td><td class="'+pnlClass(r.changePct)+'">'+fmtSigned(r.changePct)+'%</td><td class="'+pnlClass(r.changePct)+'">'+fmt(r.price,digits)+'</td><td>'+fmt(q.volumeRatio)+'</td><td class="'+pnlClass(q.change)+'">'+fmtSigned(q.change,digits)+'</td><td class="tags" title="'+escapeHtml(r.tags.join(' / '))+'">'+escapeHtml(r.tags.join(' / '))+'</td></tr>';
-  }).join('')+'</tbody></table>';
+    return '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(r.name)+'<small>'+escapeHtml(r.code.toUpperCase())+'</small></td><td class="'+pnlClass(r.changePct)+'">'+fmtSigned(r.changePct)+'%</td><td class="'+pnlClass(r.changePct)+'">'+fmt(r.price,digits)+'</td><td>'+fmt(q.volumeRatio)+'</td><td>'+fmt(r.value)+'</td><td class="'+pnlClass(r.pnl)+'">'+fmtSigned(r.pnl)+'</td><td class="'+pnlClass(r.pnlPct)+'">'+fmtSigned(r.pnlPct)+(r.pnlPct == null?'':'%')+'</td><td class="'+pnlClass(r.dayPnl)+'">'+fmtSigned(r.dayPnl)+'</td><td class="'+pnlClass(q.change)+'">'+fmtSigned(q.change,digits)+'</td><td class="tags" title="'+escapeHtml(r.tags.join(' / '))+'">'+escapeHtml(r.tags.join(' / '))+'</td></tr>';
+  }).join('')+'</tbody></table>' + (rows.length ? '' : '<div class="empty">暂无当前持仓</div>');
 }
 function renderWatchlists() {
   ensureStateShape();
@@ -1581,9 +1591,12 @@ function renderWatchlists() {
   $('portraitTable').hidden = !portraitMode;
   $('watchItems').hidden = portraitMode;
   $('portraitToggle').textContent = portraitMode ? '返回卡片' : '竖屏一览';
-  if (portraitMode) renderPortrait(rows.filtered);
+  $('portraitHint').hidden = !portraitMode;
+  ['filterText','filterStatus','sortKey','listTabs'].forEach(function(id) { $(id).hidden = portraitMode; });
+  if (portraitMode) renderPortrait(currentPortraitRows());
   $("watchCount").textContent = rows.filtered.length + " / " + rows.total + " 只";
-  $("watchEmpty").hidden = rows.filtered.length > 0;
+  if (portraitMode) $("watchCount").textContent = currentPortraitRows().length + " 只持仓";
+  $("watchEmpty").hidden = portraitMode || rows.filtered.length > 0;
   $("loadingTip").hidden = firstQuoteLoaded || rows.total === 0;
   renderDaySummary(rows.filtered);
 
