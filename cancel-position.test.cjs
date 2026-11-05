@@ -1,0 +1,15 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const html=fs.readFileSync(__dirname+'/index.html','utf8');
+const fields={}; for(const name of ['.r-code','.r-name','.r-cost','.r-qty','.del-btn']) fields[name]={value:'',addEventListener(type,fn){this[type]=fn;}};
+let removed=false,approved=true,rate=1;const txs=[];
+const div={querySelector:n=>fields[n],querySelectorAll:()=>[],remove(){removed=true;}};
+const c=vm.createContext({document:{createElement:()=>div},$:()=>({appendChild(){}}),state:{cash:100,rows:[{code:'sz000848',qty:100}]},normalizeCode:x=>x,codeDigits:x=>x,fmt:String,confirm:()=>approved,currencyRate:()=>rate,logTx:t=>txs.push(t),chinaDate:()=> '2026-11-05',toast(){},syncStateFromForm(){},saveLocal(){},renderCash(){},renderAll(){},pushNow(){},refreshQuotes(){}});
+vm.runInContext(html.slice(html.indexOf('function addRow('),html.indexOf('function syncStateFromForm(')),c);
+c.addRow({code:'sz000848',cost:8,qty:100});
+for(const field of Object.values(fields)) field.value=String(field.value);
+approved=false;fields['.del-btn'].click();assert.equal(c.state.cash,100);assert.equal(removed,false);
+approved=true;fields['.del-btn'].click();assert.equal(c.state.cash,900);assert.equal(txs[0].type,'撤销持仓');assert.equal(txs[0].cashAmountCny,800);assert.equal(c.state.rows[0].qty,0);assert.equal(removed,true);
+assert.equal(c.cancellationRefund('hk09992',100,100,.85),8500);
+assert.equal(c.cancellationRefund('hk09992',100,100,null),null);
+assert.equal(c.cancellationRefund('sz000848',-1,100,1),null);
+console.log('PASS: cancel returns displayed cost to cash, decline leaves state unchanged, HK conversion, invalid inputs');

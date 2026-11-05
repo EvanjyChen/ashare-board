@@ -955,7 +955,7 @@ function addRow(data) {
     '<input type="text" class="r-name" placeholder="名称(自动)">' +
     '<input type="number" class="r-cost" placeholder="成本价" inputmode="decimal" step="any" min="0">' +
     '<input type="number" class="r-qty" placeholder="数量" inputmode="decimal" step="any" min="0">' +
-    '<button class="del-btn" title="删除">×</button>';
+    '<button class="del-btn" title="按显示成本价撤销持仓并返还现金">撤销</button>';
   if (data) {
     div.querySelector(".r-code").value = codeDigits(data.code || "");
     div.querySelector(".r-name").value = data.name || "";
@@ -963,10 +963,25 @@ function addRow(data) {
     div.querySelector(".r-qty").value = data.qty || "";
   }
   div.querySelector(".del-btn").addEventListener("click", function () {
+    const code = normalizeCode(div.querySelector('.r-code').value);
+    const qty = Number(div.querySelector('.r-qty').value);
+    const cost = Number(div.querySelector('.r-cost').value);
+    if (qty > 0) {
+      if (!div.querySelector('.r-cost').value.trim()) { toast('请输入撤销持仓的成本价'); return; }
+      const refund = cancellationRefund(code, cost, qty, currencyRate(code));
+      if (refund === null) { toast('请检查代码、成本价和数量；港股需先取得有效汇率'); return; }
+      if (!confirm('撤销 '+codeDigits(code)+' 的 '+fmt(qty,0)+' 股持仓？\n按显示成本价 '+fmt(cost,4)+' 返还人民币现金 '+fmt(refund)+' 元。\n这是持仓调整，不是卖出；历史买卖记录保留。总资产按成本回补，不保证与撤销前市值相同。')) return;
+      syncStateFromForm();
+      state.cash = Math.round((state.cash + refund) * 100) / 100;
+      logTx({type:'撤销持仓',code:code,price:cost,qty:qty,amount:Math.round(cost*qty*100)/100,cashAmountCny:refund,tradeDate:chinaDate()});
+      state.rows.forEach(function(r) { if (r.code === code) r.qty=0; });
+    } else if (!Number.isFinite(qty) || qty < 0) { toast('请输入有效持仓数量'); return; }
     div.remove();
     syncStateFromForm();
     saveLocal();
+    renderCash();
     renderAll();
+    pushNow();
     refreshQuotes(); // 持仓变化立即刷新
   });
   // 输入变化实时同步 state 并保存
@@ -990,6 +1005,11 @@ function addRow(data) {
 }
 
 // 表单 -> state（过滤无效代码行；输入的 6 位数字自动加沪深前缀）
+function cancellationRefund(code, cost, qty, rate) {
+  if (!code || !Number.isFinite(cost) || cost < 0 || !Number.isFinite(qty) || qty <= 0 || !Number.isFinite(rate) || rate <= 0) return null;
+  const amount=Math.round(cost*qty*rate*100)/100;
+  return Number.isFinite(amount) ? amount : null;
+}
 function syncStateFromForm() {
   const list = [];
   const oldByCode = {};
@@ -1723,21 +1743,21 @@ function txsForCode(code) {
     copy._index = index;
     return copy;
   }).filter(function (tx) {
-    return normalizeCode(tx.code) === code && (tx.type === "买入" || tx.type === "卖出");
+    return normalizeCode(tx.code) === code && (tx.type === "买入" || tx.type === "卖出" || tx.type === "撤销持仓");
   }).sort(function (a, b) {
     return String(a.time || "").localeCompare(String(b.time || ""));
   });
 }
 
 function renderTxLine(tx) {
-  const date = tx.time ? String(tx.time).slice(0, 10) : "--";
+  const date = tx.tradeDate || (tx.time ? String(tx.time).slice(0, 10) : "--");
   const realized = tx.type === "卖出" && tx.realizedPnl ? '<span class="' + pnlClass(tx.realizedPnl) + '">' + fmtSigned(tx.realizedPnl) + '</span>' : "";
-  const deleteBtn = MODE === "edit" ? '<button class="tx-del" data-delete-tx="' + tx._index + '" title="删除买卖记录">删</button>' : '<span></span>';
+  const deleteBtn = MODE === "edit" && tx.type !== '撤销持仓' ? '<button class="tx-del" data-delete-tx="' + tx._index + '" title="删除买卖记录">删</button>' : '<span></span>';
   return '<div class="tx-line">' +
     '<span>' + escapeHtml(date) + '</span>' +
     '<span>' + escapeHtml(tx.type) + '</span>' +
     '<span>' + fmt(tx.price) + " × " + fmt(tx.qty, 0) + '</span>' +
-    '<span>' + realized + '</span>' +
+    '<span>' + (tx.type === '撤销持仓' ? '返还 ¥'+fmt(tx.cashAmountCny) : realized) + '</span>' +
     deleteBtn +
   '</div>';
 }
