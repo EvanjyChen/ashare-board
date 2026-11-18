@@ -1187,6 +1187,7 @@ function normalizeCode(raw) {
   if (num.length === 5) return !m[1] || m[1] === "hk" ? "hk" + num : "";
   if (m[1] === "hk") return "";
   if (/^(920|[48])/.test(num)) return "bj" + num;
+  if (/^6/.test(num)) return "sh" + num;
   if (m[1]) return m[1] + num;
   const first = num.charAt(0);
   return (first === "5" || first === "6" || first === "9" ? "sh" : "sz") + num;
@@ -1347,14 +1348,22 @@ async function refreshQuotes() {
   }
   fetching = true;
   let ok = false, used = "";
+  let missing = codes.slice();
   for (const item of getProviderChain()) {
     try {
-      const map = await item[1](codes);
+      const map = await item[1](missing);
       if (map && Object.keys(map).length) {
-        mergeQuotes(map);
+        const valid = {};
+        missing.forEach(function (code) {
+          const q = map[code];
+          if (q && (q.price > 0 || q.prevClose > 0)) valid[code] = q;
+        });
+        if (!Object.keys(valid).length) continue;
+        mergeQuotes(valid);
         ok = true;
-        used = item[0];
-        break;
+        used += (used ? " + " : "") + item[0];
+        missing = missing.filter(function (code) { return !valid[code]; });
+        if (!missing.length) break;
       }
     } catch (e) { /* 该源失败，继续降级 */ }
   }
@@ -1588,11 +1597,11 @@ function currentPortraitRows() {
   });
 }
 function renderPortrait(rows) {
-  const columns = [['name','名称 / 代码'],['changePct','涨幅%'],['price','现价'],['volumeRatio','量比'],['value','市值'],['pnl','累计盈亏'],['pnlPct','累计盈亏率'],['dayPnl','当日盈亏'],['change','涨跌']];
+  const columns = [['name','名称 / 代码'],['changePct','涨幅%'],['price','现价'],['qty','持仓股数'],['volumeRatio','量比'],['value','市值'],['pnl','累计盈亏'],['pnlPct','累计盈亏率'],['dayPnl','当日盈亏'],['change','涨跌']];
   const header = '<tr><th>#</th>' + columns.map(function(c) { return '<th><button onclick="sortPortrait(\''+c[0]+'\')">'+c[1]+(portraitSort===c[0] ? (portraitDirection===1?' ↑':' ↓'):'')+'</button></th>'; }).join('') + '<th>标签</th></tr>';
   $('portraitTable').innerHTML = '<table><thead>'+header+'</thead><tbody>'+rows.slice().sort(comparePortrait).map(function(r,i) {
     const q=r.q||{}, digits=/^hk/.test(r.code)?3:2;
-    return '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(r.name)+'<small>'+escapeHtml(r.code.toUpperCase())+'</small><small>持仓 '+fmt(r.qty,0)+' 股</small></td><td class="'+pnlClass(r.changePct)+'">'+fmtSigned(r.changePct)+'%</td><td class="'+pnlClass(r.changePct)+'">'+fmt(r.price,digits)+'</td><td>'+fmt(q.volumeRatio)+'</td><td>'+fmt(r.value)+'</td><td class="'+pnlClass(r.pnl)+'">'+fmtSigned(r.pnl)+'</td><td class="'+pnlClass(r.pnlPct)+'">'+fmtSigned(r.pnlPct)+(r.pnlPct == null?'':'%')+'</td><td class="'+pnlClass(r.dayPnl)+'">'+fmtSigned(r.dayPnl)+'</td><td class="'+pnlClass(q.change)+'">'+fmtSigned(q.change,digits)+'</td><td class="tags" title="'+escapeHtml(r.tags.join(' / '))+'">'+escapeHtml(r.tags.join(' / '))+'</td></tr>';
+    return '<tr><td>'+(i+1)+'</td><td>'+escapeHtml(r.name)+'<small>'+escapeHtml(r.code.toUpperCase())+'</small></td><td class="'+pnlClass(r.changePct)+'">'+fmtSigned(r.changePct)+'%</td><td class="'+pnlClass(r.changePct)+'">'+fmt(r.price,digits)+'</td><td>'+fmt(r.qty,0)+'</td><td>'+fmt(q.volumeRatio)+'</td><td>'+fmt(r.value)+'</td><td class="'+pnlClass(r.pnl)+'">'+fmtSigned(r.pnl)+'</td><td class="'+pnlClass(r.pnlPct)+'">'+fmtSigned(r.pnlPct)+(r.pnlPct == null?'':'%')+'</td><td class="'+pnlClass(r.dayPnl)+'">'+fmtSigned(r.dayPnl)+'</td><td class="'+pnlClass(q.change)+'">'+fmtSigned(q.change,digits)+'</td><td class="tags" title="'+escapeHtml(r.tags.join(' / '))+'">'+escapeHtml(r.tags.join(' / '))+'</td></tr>';
   }).join('')+'</tbody></table>' + (rows.length ? '' : '<div class="empty">暂无当前持仓</div>');
 }
 function renderWatchlists() {
