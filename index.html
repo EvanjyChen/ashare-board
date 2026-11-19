@@ -325,6 +325,8 @@
         <input type="number" id="tradeQty" placeholder="数量" inputmode="decimal" min="0" step="any">
         <input type="date" id="tradeDate" aria-label="交易日期">
       </div>
+      <div class="hint">买入价格请填已含费用的成本单价，不重复扣费。卖出税费：A 股留空自动估算；港股必须按交割单填写，单位港元。可填实际合计覆盖估算。</div>
+      <input type="number" id="sellFeeTotal" placeholder="卖出佣金及税费合计（A 股人民币／港股港元）" min="0" step="0.01">
       <div class="trade-row">
         <button class="btn btn-buy" id="buyBtn">买入</button>
         <button class="btn btn-sell" id="sellBtn">卖出</button>
@@ -440,6 +442,7 @@
 </div>
 
 <script src="fx-policy.js?v=connect-3"></script>
+<script src="sell-fees.js?v=1"></script>
 <script>
 "use strict";
 /* =====================================================================
@@ -740,6 +743,8 @@ function normalizeTx(tx) {
     cashAmountCny: Number.isFinite(tx.cashAmountCny) ? tx.cashAmountCny : null,
     fxStatus: ['pending','settled','manual'].includes(tx.fxStatus) ? tx.fxStatus : '',
     fxRate: Number(tx.fxRate) || null,
+    sellFee: Number(tx.sellFee) || 0,
+    feeSource: String(tx.feeSource || ''),
     realizedPnl: Number(tx.realizedPnl) || 0,
     tradeDate: tx.tradeDate || String(tx.time || '').slice(0, 10),
     time: tx.time || ""
@@ -1082,14 +1087,14 @@ function settleTrade(index) {
   if (!tx || !/^hk/.test(normalizeCode(tx.code)) || !['买入','卖出'].includes(tx.type)) return;
   if (!Number.isFinite(tx.cashAmountCny)) { toast('旧流水缺少原人民币现金记录，不能自动校正'); return; }
   const fx=FxPolicy.trade(connectFx,tx.tradeDate,tx.type==='买入');
-  const suggested=fx && fx.status==='settled' ? Math.round(tx.amount*fx.rate*100)/100 : tx.cashAmountCny;
-  const input=prompt('输入交割单实际人民币'+(tx.type==='卖出'?'净到账':'扣款')+'金额。'+(fx && fx.status==='settled' ? '默认值按该交易日结算汇率计算，未扣手续费。' : '该日结算汇率未公布，请以交割单为准。'),suggested.toFixed(2));
+  const suggested=fx && fx.status==='settled' ? Math.round((tx.amount-(tx.type==='卖出'?(Number(tx.sellFee)||0):0))*fx.rate*100)/100 : tx.cashAmountCny;
+  const input=prompt('输入交割单实际人民币'+(tx.type==='卖出'?'净到账':'扣款')+'金额。'+(fx && fx.status==='settled' ? '默认值按该交易日结算汇率及已录入卖出税费计算；请核对交割单。' : '该日结算汇率未公布，请以交割单为准。'),suggested.toFixed(2));
   if (input===null || !input.trim()) return;
   const actual=Number(input);
   if (!Number.isFinite(actual) || actual<0) { toast('请输入有效金额'); return; }
   const next=FxPolicy.reconcile(tx,actual,state.cash);
   state.cash=next.cash; tx.cashAmountCny=next.amount; tx.fxStatus='manual';
-  tx.fxRate=tx.amount>0 ? next.amount/tx.amount : null;
+  if (fx && fx.status==='settled') tx.fxRate=fx.rate;
   saveLocalOnly(); pushNow(); renderCash(); renderAll(); toast('已按实际金额校正现金');
 }
 function tradeDateStr() {
@@ -1120,7 +1125,7 @@ function doTransfer(dir) {
   toast((dir > 0 ? "已转入 " : "已转出 ") + fmt(amt) + " 元");
 }
 
-// 买入 / 卖出：同时变动持仓与现金（不含手续费）
+// 买入成本含费；卖出扣佣金税费后变动现金与已实现盈亏
 function doTrade(isBuy) {
   const code = normalizeCode($("tradeCode").value);
   const price = parseFloat($("tradePrice").value);
@@ -1133,7 +1138,12 @@ function doTrade(isBuy) {
   const tradeFx = /^hk/.test(code) ? FxPolicy.trade(connectFx, tradeDateStr(), isBuy) : {rate:1,status:'settled'};
   const rate = tradeFx && tradeFx.rate;
   if (!rate) { toast("该交易日期的港股通汇率尚未取得，不能用其他日期汇率结算；请刷新或使用交割单补录"); return; }
-  const cashAmountCny = Math.round(amount * rate * 100) / 100;
+  let fees={total:0,source:''};
+  if (!isBuy) {
+    try { fees=SellFees.calculate(code,amount,tradeDateStr(),$('sellFeeTotal').value.trim()); }
+    catch(e) { toast(e.message); return; }
+  }
+  const cashAmountCny = Math.round((amount-fees.total) * rate * 100) / 100;
   let row = null;
   state.rows.forEach(function (r) { if (r.code === code) row = r; });
 
@@ -1152,7 +1162,7 @@ function doTrade(isBuy) {
   } else {
     if (!row || qty > row.qty) { toast("持仓不足，无法卖出"); return; }
     const tradeDate = tradeDateStr();
-    const realized = Math.round((price - row.cost) * qty * 100) / 100;
+    const realized = Math.round(((price - row.cost) * qty - fees.total) * 100) / 100;
     const realizedCost = Math.round(row.cost * qty * 100) / 100;
     row.realizedPnl = Math.round(((Number(row.realizedPnl) || 0) + realized) * 100) / 100;
     row.realizedCost = Math.round(((Number(row.realizedCost) || 0) + realizedCost) * 100) / 100;
@@ -1165,12 +1175,13 @@ function doTrade(isBuy) {
     if (row.qty <= 0) { // 清仓：保留数量 0 的历史持仓，用于展示已实现盈亏
       row.qty = 0;
     }
-    logTx({ type: "卖出", code: codeDigits(code), price: price, qty: qty, amount: amount, cashAmountCny: cashAmountCny, fxStatus: /^hk/.test(code) ? tradeFx.status : "", fxRate: rate, realizedPnl: realized, time: txTime });
+    logTx({ type: "卖出", code: codeDigits(code), price: price, qty: qty, amount: amount, cashAmountCny: cashAmountCny, fxStatus: /^hk/.test(code) ? tradeFx.status : "", fxRate: rate, sellFee: fees.total, feeSource: fees.source, realizedPnl: realized, time: txTime });
     toast("已卖出 " + codeDigits(code) + " × " + fmt(qty, 0) + "，回款人民币 " + fmt(cashAmountCny));
   }
   if (tradeFx.status === "pending") toast("已按参考汇率预估现金；结算价公布后请在流水点击结算／校正");
   saveLocalOnly();
   pushNow(); // 交易立即同步到云端看板
+  $('sellFeeTotal').value='';
   renderForm();    // 同步上方持仓表单
   renderAll();
   refreshQuotes(); // 新股票立即拉价；非交易时间也允许这次手动触发
@@ -1444,7 +1455,7 @@ function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
     const amount = Number(tx.amount) > 0 ? Number(tx.amount) : price * qty;
     if (!Number.isFinite(amount)) return null;
     if (tx.type === '买入') { buyQty += qty; buyAmount += amount; }
-    else { sellQty += qty; sellAmount += amount; }
+    else { sellQty += qty; sellAmount += amount - (Number(tx.sellFee)||0); }
   }
   const startQty = currentQty - buyQty + sellQty;
   if (startQty < -0.000001 || (startQty > 0 && !(prevClose > 0))) return null;
@@ -1631,7 +1642,7 @@ function renderOverview() {
   tp.title = "逐股计算：当前市值＋今日卖出收入－今日买入支出－昨日持仓按昨收估值。";
   let detail=$('pnlCalculation');
   if (!detail) { detail=document.createElement('div'); detail.id='pnlCalculation'; detail.style.cssText='font-size:12px;line-height:1.6;margin-top:8px;overflow-wrap:anywhere'; tp.parentNode.appendChild(detail); }
-  detail.textContent=chinaDate()+' · 按录入的交易日期逐股汇总（含今日清仓），不计转入、转出及调平。港股持仓按参考中间价估值，交易现金按流水记录，不含隔夜汇兑损益、手续费。'+(c.todayComplete ? '' : '部分行情未更新至今日、汇率缺失或持仓与流水不一致，暂不显示合计。');
+  detail.textContent=chinaDate()+' · 按录入的交易日期逐股汇总（含今日清仓），不计转入、转出及调平。港股持仓按参考中间价估值，交易现金按流水记录，已扣已录入卖出税费，不含隔夜汇兑损益。'+(c.todayComplete ? '' : '部分行情未更新至今日、汇率缺失或持仓与流水不一致，暂不显示合计。');
   tp.className = "v " + pnlClass(c.todayPnl);
 
   const ap = $("totalPnl");
@@ -1874,7 +1885,7 @@ function renderTxLine(tx) {
     '<span>' + escapeHtml(date) + '</span>' +
     '<span>' + escapeHtml(tx.type) + '</span>' +
     '<span>' + fmt(tx.price) + " × " + fmt(tx.qty, 0) + '</span>' +
-    '<span>' + (tx.type === '撤销持仓' ? '返还 ¥'+fmt(tx.cashAmountCny) : realized) + settleBtn + '</span>' +
+    '<span>' + (tx.sellFee ? '<small>税费 '+fmt(tx.sellFee)+(/^hk/.test(normalizeCode(tx.code))?' 港元':' 元')+'</small>' : '') + (tx.type === '撤销持仓' ? '返还 ¥'+fmt(tx.cashAmountCny) : realized) + settleBtn + '</span>' +
     deleteBtn +
   '</div>';
 }
@@ -2067,7 +2078,7 @@ function realizedPnlFromTxs() {
       const avg = p.qty > 0 ? p.cost / p.qty : 0;
       const sellQty = Math.min(tx.qty, p.qty);
       const soldCost = avg * sellQty;
-      p.pnl += tx.realizedPnl || (amount - soldCost);
+      p.pnl += tx.realizedPnl || (amount - soldCost - (Number(tx.sellFee)||0));
       p.cost = Math.max(0, p.cost - soldCost);
       p.qty = Math.max(0, p.qty - sellQty);
     }
