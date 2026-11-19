@@ -3,7 +3,7 @@
   'use strict';
   function select(data, live, now) {
     const day = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Hong_Kong',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(now));
-    if (!data || day < data.validFrom || day > data.validThrough) return {rate:null,label:'交易日历不可用，等待更新'};
+    if (!data || !Array.isArray(data.sessions) || !data.closes || !data.validFrom || !data.validThrough || day < data.validFrom || day > data.validThrough) return {rate:null,label:'交易日历不可用，等待更新'};
     const session=data.sessions.find(s=>s.date===day);
     // Lunch remains within today's session; only final close freezes valuation.
     if (session && now>=Date.parse(session.open) && now<Date.parse(session.close)) {
@@ -18,7 +18,21 @@
       return {rate:null,label:(completed ? completed.date+' ' : '')+'收盘汇率待采集，请稍后刷新'};
     return {...q,label:completed.date+' 收盘锁定汇率'};
   }
-  const api={select};
+  function valid(q, now) {
+    return q && Number.isFinite(q.rate) && q.rate>0.1 && q.rate<2 &&
+      Number.isFinite(Date.parse(q.quotedAt)) && Date.parse(q.quotedAt)<=now+5000;
+  }
+  function resolve(data, live, candidates, now) {
+    const target=select(data, live, now);
+    if (target.rate) return {...target,estimated:false};
+    const archived=data && data.closes ? Object.values(data.closes).filter(q=>Date.parse(q.closeAt)<=now) : [];
+    const options=[live,...(candidates||[]),...archived].filter(q=>valid(q,now));
+    options.sort((a,b)=>Date.parse(b.quotedAt)-Date.parse(a.quotedAt));
+    if (!options.length) return {...target,estimated:true};
+    const q=options[0];
+    return {...q,estimated:true,label:target.label+' · 备用估算（'+(q.source||'缓存')+'）'};
+  }
+  const api={select,resolve,valid};
   if (typeof module!=='undefined' && module.exports) module.exports=api;
   else root.FxPolicy=api;
 })(typeof window==='undefined' ? globalThis : window);

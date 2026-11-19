@@ -342,6 +342,7 @@
 
   <!-- 行情加载状态 -->
   <div class="hint" id="fxStatus">人民币汇总；港股报价及成本价以港元计，等待汇率。</div>
+  <div class="hint"><a href="https://www.exchangerate-api.com" target="_blank" rel="noopener">备用日汇率：ExchangeRate-API</a>；备用值仅供估算，页面保留原始报价时间。</div>
   <div id="loadingTip" class="loading">行情加载中…</div>
 
   <!-- 股票池 / 标签 / 持仓计划复盘 -->
@@ -438,7 +439,7 @@
   </div>
 </div>
 
-<script src="fx-policy.js?v=hk-close-1"></script>
+<script src="fx-policy.js?v=hk-fallback-2"></script>
 <script>
 "use strict";
 /* =====================================================================
@@ -484,7 +485,8 @@ const CONFIG = {
  * =================================================================== */
 let MODE = "edit";            // "edit" | "board"（有 #data= 或 #board= 时进入只读看板）
 let state = { cash: 0, rows: [], lists: [], pool: [], notes: {}, txs: [] };  // rows: [{code,name,cost,qty}]
-let quotes = {};              // code -> {name,open,prevClose,price,change,changePct,date}
+let quotes = {};
+try { const saved=JSON.parse(localStorage.getItem('ashare_quotes_v1')); if (saved && typeof saved==='object' && !Array.isArray(saved)) quotes=saved; } catch(e) {}              // code -> {name,open,prevClose,price,change,changePct,date}
 let firstQuoteLoaded = false; // 首次行情是否已成功返回（用于首次打开即记快照）
 let refreshTimer = null;
 let boardMeta = null;         // {boardId, objectId} 云端看板元信息（编辑模式持久化在本地）
@@ -1278,7 +1280,7 @@ function fetchTencent(codes) {
       const out = {};
       const fx = String(window.v_whHKDCNY || "").split("~");
       const stamp = String(fx[5] || '').replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6+08:00');
-      if (Number(fx[3]) > 0 && Number.isFinite(Date.parse(stamp))) liveFx = {rate:Number(fx[3]), quotedAt:stamp};
+      if (Number(fx[3]) > 0 && Number.isFinite(Date.parse(stamp))) rememberFx({rate:Number(fx[3]), quotedAt:stamp,source:'腾讯实时行情'}, true);
       applyFxPolicy();
       codes.forEach(function (code) {
         const raw = window["v_" + code];
@@ -1322,9 +1324,11 @@ function mergeQuotes(map) {
       change: prevClose ? price - prevClose : null,
       changePct: prevClose ? (price - prevClose) / prevClose * 100 : null,
       volumeRatio: Number.isFinite(n.volumeRatio) ? n.volumeRatio : null,
+      cachedAt: Date.now(),
       date: n.date || (n.time ? tsToLocalDateStr(n.time) : (old.date || ""))
     };
   }
+  try { localStorage.setItem('ashare_quotes_v1', JSON.stringify(quotes)); } catch(e) {}
 }
 
 let fetching = false;
@@ -1432,14 +1436,66 @@ function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
  * 盈亏与占比计算（口径见需求说明）
  * =================================================================== */
 let hkdCny = null;
-let liveFx = null, fxArchive = null, fxArchiveFetched = 0, fxArchiveLoading = null;
+const fxBootstrap = {"rate": 0.853, "quotedAt": "2026-11-20T01:39:48+08:00", "source": "腾讯最近已知报价（启动备用）"};
+let liveFx = null, fxCache = null, fxDaily = null, fxBusy = false, fxDailyAttempt = 0, fxArchive = null, fxArchiveFetched = 0, fxArchiveLoading = null;
+try { fxCache=JSON.parse(localStorage.getItem('ashare_fx_last_v1')); fxDaily=JSON.parse(localStorage.getItem('ashare_fx_daily_v1')); } catch(e) {}
 try { fxArchive = JSON.parse(localStorage.getItem('ashare_fx_archive_v1')); } catch(e) {}
 function applyFxPolicy() {
-  const chosen = FxPolicy.select(fxArchive, liveFx, Date.now());
+  const chosen = FxPolicy.resolve(fxArchive, liveFx, [fxCache, fxDaily, fxArchive && fxArchive.fallback, fxBootstrap], Date.now());
   hkdCny = chosen.rate;
-  if ($('fxStatus')) $('fxStatus').textContent = chosen.label +
+  if ($('fxStatus')) $('fxStatus').textContent = chosen.label + (chosen.source ? ' · '+chosen.source : '') +
     (chosen.rate ? ' · 1 港元 = ' + chosen.rate + ' 人民币 · 报价时间 ' + chosen.quotedAt.replace('T',' ') : '') +
     '；全日市 16:00、半日市 12:00 锁定（北京时间，不含收市竞价）。';
+}
+function rememberFx(q, realtime) {
+  if (!FxPolicy.valid(q,Date.now())) return;
+  if (realtime && (!liveFx || Date.parse(q.quotedAt)>=Date.parse(liveFx.quotedAt))) liveFx=q;
+  if (!FxPolicy.valid(fxCache,Date.now()) || Date.parse(q.quotedAt)>=Date.parse(fxCache.quotedAt)) {
+    fxCache=q;
+    try { localStorage.setItem('ashare_fx_last_v1',JSON.stringify(q)); } catch(e) {}
+  }
+}
+function fxScript(url, variable) {
+  return new Promise(function(resolve,reject) {
+    const el=document.createElement('script'); el.charset='gbk';
+    window[variable]='';
+    const timer=setTimeout(function(){done(new Error('FX timeout'));},5000);
+    function done(err) { clearTimeout(timer); el.remove(); el.onload=el.onerror=null; err ? reject(err) : resolve(String(window[variable]||'')); }
+    el.onload=function(){done();}; el.onerror=function(){done(new Error('FX source unavailable'));};
+    el.src=url; document.head.appendChild(el);
+  });
+}
+async function refreshFxFallback() {
+  if (fxBusy || document.hidden) return;
+  fxBusy=true;
+  try {
+    // Separate FX refresh also runs after HK close, without changing a valid close valuation.
+    if (!FxPolicy.valid(liveFx,Date.now()) || Date.now()-Date.parse(liveFx.quotedAt)>60000) {
+      try {
+        const f=(await fxScript('https://qt.gtimg.cn/q=whHKDCNY&_='+Date.now(),'v_whHKDCNY')).split('~');
+        const stamp=String(f[5]||'').replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6+08:00');
+        rememberFx({rate:Number(f[3]),quotedAt:stamp,source:'腾讯实时行情'},true);
+      } catch(e) {}
+    }
+    if (!FxPolicy.valid(liveFx,Date.now()) || Date.now()-Date.parse(liveFx.quotedAt)>180000) {
+      try {
+        const f=(await fxScript('https://hq.sinajs.cn/list=fx_shkdcny&_='+Date.now(),'hq_str_fx_shkdcny')).split(',');
+        rememberFx({rate:Number(f[8]),quotedAt:f[17]+'T'+f[0]+'+08:00',source:'新浪备用实时行情'},true);
+      } catch(e) {}
+    }
+    if ((!FxPolicy.valid(liveFx,Date.now()) || Date.now()-Date.parse(liveFx.quotedAt)>180000) &&
+        Date.now()-fxDailyAttempt>3600000 && (!FxPolicy.valid(fxDaily,Date.now()) || Date.now()-Date.parse(fxDaily.quotedAt)>86400000)) {
+      fxDailyAttempt=Date.now();
+      try {
+        const resp=await fetch('https://open.er-api.com/v6/latest/HKD',{signal:AbortSignal.timeout(5000)});
+        const d=await resp.json();
+        if (resp.ok && d.result==='success' && d.base_code==='HKD') {
+          const q={rate:Number(d.rates.CNY),quotedAt:new Date(d.time_last_update_unix*1000).toISOString(),source:'ExchangeRate-API 每日参考价'};
+          if (FxPolicy.valid(q,Date.now())) { fxDaily=q; localStorage.setItem('ashare_fx_daily_v1',JSON.stringify(q)); }
+        }
+      } catch(e) {}
+    }
+  } finally { fxBusy=false; applyFxPolicy(); renderAll(); }
 }
 async function loadFxArchive() {
   if (fxArchiveLoading) return fxArchiveLoading;
@@ -2709,7 +2765,7 @@ function bindEvents() {
   });
 
   document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) { loadFxArchive(); refreshQuotes(); if (MODE === 'board') pullState(); }
+    if (!document.hidden) { refreshFxFallback(); loadFxArchive(); refreshQuotes(); if (MODE === 'board') pullState(); }
   });
 }
 
@@ -2791,8 +2847,10 @@ function init() {
   renderAll();
   renderHistory();
   suppressAutoPush = false;
+  applyFxPolicy();
+  refreshFxFallback();
   loadFxArchive().then(function() { renderAll(); });
-  setInterval(function() { applyFxPolicy(); renderAll(); loadFxArchive().then(function() { renderAll(); }); }, 30000);
+  setInterval(function() { applyFxPolicy(); renderAll(); refreshFxFallback(); loadFxArchive().then(function() { renderAll(); }); }, 30000);
   refreshQuotes(); // 首次打开总是拉一次（非交易时间也能看到最新收盘价）
   // 定时刷新仅交易时段生效；非交易时间只有手动添加股票/保存时才触发刷新
   refreshTimer = setInterval(function () {

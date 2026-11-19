@@ -42,13 +42,16 @@ def main():
     p=argparse.ArgumentParser(); p.add_argument('--calendar-only',action='store_true'); p.add_argument('--probe',action='store_true'); a=p.parse_args()
     if a.probe: print(json.dumps(quote())); return
     now=dt.datetime.now(HK); path=ROOT/'data/hkd-cny.json'; data=calendar(now)
-    if path.exists(): data['closes']=json.loads(path.read_text())['closes']
+    if path.exists():
+        old=json.loads(path.read_text()); data['closes']=old['closes']; data['fallback']=old.get('fallback')
+    try: data['fallback']=quote()
+    except Exception: pass
     if not a.calendar_only:
         session=next((s for s in data['sessions'] if s['date']==str(now.date())),None)
-        if not session: print('HKEX holiday: no capture'); return
+        if not session: print('HKEX holiday: no capture'); path.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n'); return
         target=dt.datetime.fromisoformat(session['close']); remaining=(target-now).total_seconds()
-        if remaining > 2400: print('Not near this session close'); return
-        if str(now.date()) in data['closes']: print('Already captured'); return
+        if remaining > 2400: print('Updated fallback; not near this session close'); path.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n'); return
+        if str(now.date()) in data['closes']: print('Already captured'); path.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n'); return
         if remaining < -45: raise RuntimeError('Missed close capture window; refusing current FX')
         best=None
         while dt.datetime.now(HK) <= target+dt.timedelta(seconds=35):

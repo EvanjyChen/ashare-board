@@ -2140,5 +2140,10 @@
     }
   ],
   "convention": "XHKG continuous-session close; 16:00 full day, 12:00 half day",
-  "closes": {}
+  "closes": {},
+  "fallback": {
+    "rate": 0.853,
+    "quotedAt": "2026-11-20T01:39:48+08:00",
+    "source": "腾讯最近已知报价（启动备用）"
+  }
 }
