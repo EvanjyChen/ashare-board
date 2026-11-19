@@ -10,5 +10,5 @@ test('HK transaction exposes per-trade entry and both currency amounts',()=>{
  vm.runInContext(html.slice(html.indexOf('function renderTxLine('),html.indexOf('function removeDateAmount(')),c);
  const tx={type:'卖出',code:'hk06862',amount:40040,price:10.01,qty:4000,tradeDate:'2026-11-19',cashAmountCny:33900,fxStatus:'manual',_index:3};
  let out=c.renderTxLine(tx);a.match(out,/人民币实际结算金额/);a.match(out,/HK\$ 40040.00/);a.match(out,/¥ 33900.00/);a.match(out,/data-settle-tx="3"/);
- tx.fxStatus='pending';out=c.renderTxLine(tx);a.match(out,/待填写/);a.match(out,/未确认为实际结算/);
+ tx.fxStatus='pending';out=c.renderTxLine(tx);a.match(out,/预估/);a.match(out,/¥ 33900.00/);
 });

@@ -1933,7 +1933,8 @@ function renderTxLine(tx) {
   const realized = tx.type === "卖出" && tx.realizedPnl ? '<span class="' + pnlClass(tx.realizedPnl) + '">' + fmtSigned(tx.realizedPnl) + '</span>' : "";
   const settleBtn = MODE === 'edit' && /^hk/.test(normalizeCode(tx.code)) && (tx.type==='买入'||tx.type==='卖出') ? '<button class="tx-del" data-settle-tx="'+tx._index+'">'+'人民币实际结算金额'+'</button>' : '';
   const hkTrade=/^hk/.test(normalizeCode(tx.code)) && (tx.type==='买入'||tx.type==='卖出');
-  const settlement=hkTrade ? '<div class="tx-settlement"><span>港币'+(tx.type==='卖出'?'卖出':'买入')+'金额：HK$ '+fmt(tx.amount || tx.price*tx.qty)+'</span><span>人民币实际'+(tx.type==='卖出'?'净到账':'扣款')+'：'+(tx.fxStatus==='manual' ? '¥ '+fmt(tx.cashAmountCny) : '待填写')+'</span>'+(tx.fxStatus!=='manual' && Number.isFinite(tx.cashAmountCny) ? '<span>预估人民币：¥ '+fmt(tx.cashAmountCny)+'（未确认为实际结算）</span>' : '')+settleBtn+'</div>' : '';
+  const estimatedCny=Number.isFinite(tx.cashAmountCny) ? tx.cashAmountCny : (tx.amount || tx.price*tx.qty)*(currencyRate(normalizeCode(tx.code)) || fxBootstrap.rate);
+  const settlement=hkTrade ? '<div class="tx-settlement"><span>港币'+(tx.type==='卖出'?'卖出':'买入')+'金额：HK$ '+fmt(tx.amount || tx.price*tx.qty)+'</span><span>人民币'+(tx.type==='卖出'?'净到账':'扣款')+'：¥ '+fmt(tx.fxStatus==='manual' ? tx.cashAmountCny : estimatedCny)+'（'+(tx.fxStatus==='manual'?'实际':'预估，未扣未录入费用')+'）</span>'+settleBtn+'</div>' : '';
   const deleteBtn = MODE === "edit" && tx.type !== '撤销持仓' ? '<button class="tx-del" data-delete-tx="' + tx._index + '" title="删除买卖记录">删</button>' : '<span></span>';
   return '<div class="tx-line">' +
     '<span>' + escapeHtml(date) + '</span>' +
