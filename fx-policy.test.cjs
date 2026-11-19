@@ -18,3 +18,9 @@ test('real close outranks newer overnight live and backups',()=>{const x=resolve
 test('missing close uses latest valid fallback and marks estimate',()=>{const x=resolve({...data,closes:{}},null,[q,{rate:.86,quotedAt:'2026-11-20T01:00:00+08:00',source:'cache'}],Date.parse('2026-11-20T01:00:00+08:00'));assert.equal(x.rate,.86);assert.equal(x.estimated,true);assert.match(x.label,/备用估算/);});
 test('cold start without calendar uses dated bootstrap',()=>{const x=resolve(null,null,[q],Date.parse('2026-11-20T01:00:00+08:00'));assert.equal(x.rate,.8496);assert.equal(x.estimated,true);});
 test('invalid/future cached rates are ignored',()=>{const x=resolve(null,null,[{rate:Infinity,quotedAt:q.quotedAt},{rate:.9,quotedAt:'2030-01-01T00:00:00Z'},q],Date.parse('2026-11-20T01:00:00+08:00'));assert.equal(x.rate,.8496);});
+const policy=require('./fx-policy');
+const connect={reference:{'2026-11-19':{buy:.8241,sell:.8751}},settlement:{'2026-11-19':{buy:.84959,sell:.84961}}};
+test('reference mid matches both broker valuations',()=>{const r=policy.reference(connect,'2026-11-20').rate;assert.equal((142400*r).toFixed(2),'120983.04');assert.equal((40040*r).toFixed(2),'34017.98');});
+test('sell uses settlement buy; purchase uses settlement sell',()=>{assert.equal(policy.trade(connect,'2026-11-19',false).rate,.84959);assert.equal(policy.trade(connect,'2026-11-19',true).rate,.84961);});
+test('pending sell uses reference buy and never another date',()=>{assert.equal(policy.trade({...connect,settlement:{}},'2026-11-19',false).rate,.8241);assert.equal(policy.trade(connect,'2026-11-18',false),null);});
+test('cash settlement adjustment is idempotent',()=>{let tx={type:'卖出',cashAmountCny:32996.96};let a=policy.reconcile(tx,34017.58,50000);assert.equal(a.cash,51020.62);tx.cashAmountCny=a.amount;assert.equal(policy.reconcile(tx,34017.58,a.cash).cash,a.cash);});

@@ -32,7 +32,25 @@
     const q=options[0];
     return {...q,estimated:true,label:target.label+' · 备用估算（'+(q.source||'缓存')+'）'};
   }
-  const api={select,resolve,valid};
+  function reference(data, day) {
+    const date=Object.keys(data.reference||{}).filter(d=>d<=day).sort().at(-1);
+    const q=date && data.reference[date];
+    if (!q || !(q.buy>0.1 && q.sell>=q.buy && q.sell<2)) return null;
+    return {rate:(q.buy+q.sell)/2,label:'港股通参考中间价 · 适用日 '+date,source:'上交所',quotedAt:date+'（日参考汇率）',estimated:false};
+  }
+  function trade(data, date, buy) {
+    for (const [kind,status] of [['settlement','settled'],['reference','pending']]) {
+      const q=data[kind] && data[kind][date];
+      const rate=q && (buy?q.sell:q.buy);
+      if (Number.isFinite(rate) && rate>0.1 && rate<2) return {rate,status};
+    }
+    return null;
+  }
+  function reconcile(tx, actual, cash) {
+    const amount=Math.round(actual*100)/100;
+    return {amount,cash:Math.round((cash+(tx.type==='卖出'?1:-1)*(amount-tx.cashAmountCny))*100)/100};
+  }
+  const api={select,resolve,valid,reference,trade,reconcile};
   if (typeof module!=='undefined' && module.exports) module.exports=api;
   else root.FxPolicy=api;
 })(typeof window==='undefined' ? globalThis : window);
