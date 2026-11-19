@@ -449,7 +449,7 @@
   </div>
 </div>
 
-<script src="fx-policy.js?v=connect-3"></script>
+<script src="fx-policy.js?v=connect-resilient-4"></script>
 <script src="sell-fees.js?v=1"></script>
 <script>
 "use strict";
@@ -1509,17 +1509,26 @@ function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
  * 盈亏与占比计算（口径见需求说明）
  * =================================================================== */
 let connectFx = {"version": 1, "reference": {"2026-11-19": {"date": "2026-11-19", "buy": 0.8241, "sell": 0.8751, "mid": 0.8496, "source": "https://www.sse.com.cn/services/hkexsc/home/exchange/data_1134.js"}}, "settlement": {"2026-11-19": {"date": "2026-11-19", "buy": 0.84959, "sell": 0.84961, "mid": 0.8496, "source": "https://www.sse.com.cn/services/hkexsc/home/ratios/data_1136.js"}}, "updatedAt": "2026-11-19T17:50:37.484694+00:00"};
-try { const saved=JSON.parse(localStorage.getItem("ashare_connect_fx_v1")); if (saved && saved.reference && saved.settlement) { connectFx.reference=Object.assign({},connectFx.reference,saved.reference); connectFx.settlement=Object.assign({},connectFx.settlement,saved.settlement); } } catch(e) {}
+try { const saved=JSON.parse(localStorage.getItem("ashare_connect_fx_v1")); if (saved && saved.reference && saved.settlement) { connectFx.reference=FxPolicy.mergeReference(connectFx.reference,saved.reference); connectFx.settlement=FxPolicy.mergeReference(connectFx.settlement,saved.settlement); } } catch(e) {}
 let hkdCny = null;
+let fxValuationCache=null, fxReferenceFailed=false;
+try { fxValuationCache=JSON.parse(localStorage.getItem("ashare_fx_valuation_v1")); } catch(e) {}
 const fxBootstrap = {"rate": 0.853, "quotedAt": "2026-11-20T01:39:48+08:00", "source": "腾讯最近已知报价（启动备用）"};
 let liveFx = null, fxCache = null, fxDaily = null, fxBusy = false, fxDailyAttempt = 0, fxArchive = null, fxArchiveFetched = 0, fxArchiveLoading = null;
 try { fxCache=JSON.parse(localStorage.getItem('ashare_fx_last_v1')); fxDaily=JSON.parse(localStorage.getItem('ashare_fx_daily_v1')); } catch(e) {}
 try { fxArchive = JSON.parse(localStorage.getItem('ashare_fx_archive_v1')); } catch(e) {}
 function applyFxPolicy() {
-  const chosen = FxPolicy.reference(connectFx, chinaDate()) || FxPolicy.resolve(null, liveFx, [fxCache, fxDaily, fxBootstrap], Date.now());
-  hkdCny = chosen.rate;
-  if ($('fxStatus')) $('fxStatus').textContent = chosen.label + (chosen.source ? ' · '+chosen.source : '') +
-    (chosen.rate ? ' · 1 港元 = ' + chosen.rate + ' 人民币 · 报价时间 ' + chosen.quotedAt.replace('T',' ') : '') +
+  const reference = FxPolicy.reference(connectFx, chinaDate());
+  const chosen = reference || FxPolicy.resolve(null, liveFx, [fxValuationCache, fxCache, fxDaily, fxBootstrap], Date.now());
+  if (!reference) chosen.label='港股通参考价不可用 · 备用估算';
+  if (FxPolicy.valid(chosen,Date.now())) {
+    hkdCny=chosen.rate;
+    fxValuationCache=chosen;
+    try { localStorage.setItem('ashare_fx_valuation_v1',JSON.stringify(chosen)); } catch(e) {}
+  }
+  // A transient invalid response must never erase the last usable valuation rate.
+  if ($('fxStatus')) $('fxStatus').textContent = chosen.label + (fxReferenceFailed ? ' · 汇率接口不可用，使用已保存／备用值' : '') + (chosen.source ? ' · '+chosen.source : '') +
+    (chosen.rate ? ' · 1 港元 = ' + chosen.rate + ' 人民币 · ' + (chosen.effectiveDate ? '参考价适用日期 '+chosen.effectiveDate : '报价时间 '+chosen.quotedAt.replace('T',' ')) : '') +
     '；持仓按港股通参考中间价估值，卖出现金按交易日结算买入价计算。';
 }
 function rememberFx(q, realtime) {
@@ -1578,19 +1587,26 @@ async function loadFxArchive() {
   fxArchiveFetched = Date.now();
   fxArchiveLoading = (async function() {
     try {
-      const response = await fetch('https://raw.githubusercontent.com/EvanjyChen/ashare-board/main/data/connect-fx.json?t=' + Math.floor(Date.now()/60000), {cache:'no-store', signal:AbortSignal.timeout(8000)});
-      if (!response.ok) throw new Error('FX archive unavailable');
-      const data = await response.json();
-      if (data.version!==1 || !data.reference || !data.settlement) throw new Error('Invalid FX archive');
-      connectFx.reference=Object.assign({},connectFx.reference,data.reference);
-      connectFx.settlement=Object.assign({},connectFx.settlement,data.settlement);
-      try { localStorage.setItem('ashare_connect_fx_v1', JSON.stringify(connectFx)); } catch(e) {}
-    } catch(e) { /* Valid persisted archive remains available offline. */ }
+      let updated=false;
+      for (const url of ['https://raw.githubusercontent.com/EvanjyChen/ashare-board/main/data/connect-fx.json','data/connect-fx.json']) {
+        try {
+          const response=await fetch(url+'?t='+Math.floor(Date.now()/60000),{cache:'no-store',signal:AbortSignal.timeout(8000)});
+          if(!response.ok)throw new Error('FX unavailable');
+          const data=await response.json();
+          if(data.version!==1 || !FxPolicy.reference(data,chinaDate()))throw new Error('Invalid FX');
+          connectFx.reference=FxPolicy.mergeReference(connectFx.reference,data.reference);
+          connectFx.settlement=FxPolicy.mergeReference(connectFx.settlement,data.settlement);
+          try { localStorage.setItem('ashare_connect_fx_v1',JSON.stringify(connectFx)); } catch(e) {}
+          updated=true; break;
+        } catch(e) {}
+      }
+      fxReferenceFailed=!updated;
+    } catch(e) { fxReferenceFailed=true; }
     finally { fxArchiveLoading=null; applyFxPolicy(); }
   })();
   return fxArchiveLoading;
 }
-function currencyRate(code) { return /^hk/.test(code) ? hkdCny : 1; }
+function currencyRate(code) { if (!/^hk/.test(code)) return 1; if (!(Number.isFinite(hkdCny)&&hkdCny>0)) applyFxPolicy(); return hkdCny; }
 let chinaDateFormatter;
 function chinaDate() {
   if (!chinaDateFormatter) chinaDateFormatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' });
@@ -2936,6 +2952,7 @@ function init() {
   bindEvents();
   showPendingToast();
   if (MODE === "edit") renderForm();
+  applyFxPolicy();
   renderAll();
   renderHistory();
   suppressAutoPush = false;

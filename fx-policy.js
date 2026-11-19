@@ -32,11 +32,20 @@
     const q=options[0];
     return {...q,estimated:true,label:target.label+' · 备用估算（'+(q.source||'缓存')+'）'};
   }
+  function validReference(q,date) {
+    return /^\d{4}-\d{2}-\d{2}$/.test(date) && q && Number.isFinite(q.buy) && Number.isFinite(q.sell) && q.buy>0.1 && q.sell>=q.buy && q.sell<2;
+  }
+  function mergeReference(old, incoming) {
+    const out=Object.assign({},old||{});
+    Object.entries(incoming||{}).forEach(([date,q])=>{if(validReference(q,date))out[date]=q;});
+    return out;
+  }
   function reference(data, day) {
-    const date=Object.keys(data.reference||{}).filter(d=>d<=day).sort().at(-1);
-    const q=date && data.reference[date];
-    if (!q || !(q.buy>0.1 && q.sell>=q.buy && q.sell<2)) return null;
-    return {rate:(q.buy+q.sell)/2,label:'港股通参考中间价 · 适用日 '+date,source:'上交所',quotedAt:date+'（日参考汇率）',estimated:false};
+    const records=data && data.reference || {};
+    const date=Object.keys(records).filter(d=>d<=day && validReference(records[d],d)).sort().at(-1);
+    const q=date && records[date];
+    if (!q) return null;
+    return {rate:(q.buy+q.sell)/2,label:'港股通参考中间价'+(date<day?'（沿用已保存参考价）':'')+' · 适用日 '+date,source:'上交所',effectiveDate:date,quotedAt:date+'T00:00:00+08:00',estimated:date<day};
   }
   function trade(data, date, buy) {
     for (const [kind,status] of [['settlement','settled'],['reference','pending']]) {
@@ -50,7 +59,7 @@
     const amount=Math.round(actual*100)/100;
     return {amount,cash:Math.round((cash+(tx.type==='卖出'?1:-1)*(amount-tx.cashAmountCny))*100)/100};
   }
-  const api={select,resolve,valid,reference,trade,reconcile};
+  const api={select,resolve,valid,reference,trade,reconcile,mergeReference};
   if (typeof module!=='undefined' && module.exports) module.exports=api;
   else root.FxPolicy=api;
 })(typeof window==='undefined' ? globalThis : window);

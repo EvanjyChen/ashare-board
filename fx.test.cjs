@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const html = fs.readFileSync(`${__dirname}/index.html`, 'utf8');
 const context = vm.createContext({state:{cash:1000,rows:[{code:'hk09992',cost:100,qty:10}],txs:[]},quotes:{hk09992:{price:120,prevClose:110,date:'2026-11-02'}},normalizeCode:x=>x});
 vm.runInContext(html.slice(html.indexOf('function isTodayStockTrade('),html.indexOf('function renderAll()')),context);
+context.applyFxPolicy = () => {}; // Isolate missing-rate arithmetic; recovery is covered by fx-resilience tests.
 context.loadSnapshots = () => [{date:'2026-10-30',stockValue:1000,cash:900,isClose:true}];
 context.chinaDate = () => '2026-11-02';
 assert.ok(Number.isNaN(context.calc().totalAsset));
@@ -28,3 +29,4 @@ assert.equal(context.assetDayPnl(70,baseline,'2026-11-02',[transfer('转出',30)
 assert.equal(context.assetDayPnl(130,baseline,'2026-11-02',[transfer('转入',50),transfer('转出',30)]),10);
 assert.equal(context.assetDayPnl(110,baseline,'2026-11-02',[transfer('买入',50)]),10);
 console.log('PASS: deposits, withdrawals and mixed cash flows excluded from PnL; trades untouched');
+
