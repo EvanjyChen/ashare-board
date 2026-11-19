@@ -337,7 +337,7 @@
       <button class="btn btn-primary" id="shareBtn">生成分享链接</button>
     </div>
     <div class="hint" id="syncStatus"></div>
-    <div class="hint">支持沪深、北交所（920087）和港股（09992）。港股报价、成本价和交易金额以港元计；市值、盈亏和现金以人民币计，按最新可用汇率折算，不含历史汇兑损益。旧交易现金不追溯重算。数据保存在本机浏览器。</div>
+    <div class="hint">支持沪深、北交所（920087）和港股（09992）。港股报价、成本价和交易金额以港元计；市值、盈亏和现金以人民币计，盘中按实时汇率、收盘后按收盘锁定汇率折算，不含历史汇兑损益。旧交易现金不追溯重算。数据保存在本机浏览器。</div>
   </div>
 
   <!-- 行情加载状态 -->
@@ -438,6 +438,7 @@
   </div>
 </div>
 
+<script src="fx-policy.js?v=hk-close-1"></script>
 <script>
 "use strict";
 /* =====================================================================
@@ -1276,10 +1277,9 @@ function fetchTencent(codes) {
       s.remove();
       const out = {};
       const fx = String(window.v_whHKDCNY || "").split("~");
-      if (Number(fx[3]) > 0) {
-        hkdCny = Number(fx[3]);
-        if ($("fxStatus")) $("fxStatus").textContent = "1 港元 = " + hkdCny + " 人民币 · 汇率时间 " + fx[5] + "；市值及盈亏按此汇率折算（不含历史汇兑损益）。";
-      }
+      const stamp = String(fx[5] || '').replace(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})$/, '$1-$2-$3T$4:$5:$6+08:00');
+      if (Number(fx[3]) > 0 && Number.isFinite(Date.parse(stamp))) liveFx = {rate:Number(fx[3]), quotedAt:stamp};
+      applyFxPolicy();
       codes.forEach(function (code) {
         const raw = window["v_" + code];
         if (!raw) return;
@@ -1347,6 +1347,8 @@ async function refreshQuotes() {
     return;
   }
   fetching = true;
+  await loadFxArchive();
+  applyFxPolicy();
   let ok = false, used = "";
   let missing = codes.slice();
   for (const item of getProviderChain()) {
@@ -1430,6 +1432,32 @@ function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
  * 盈亏与占比计算（口径见需求说明）
  * =================================================================== */
 let hkdCny = null;
+let liveFx = null, fxArchive = null, fxArchiveFetched = 0, fxArchiveLoading = null;
+try { fxArchive = JSON.parse(localStorage.getItem('ashare_fx_archive_v1')); } catch(e) {}
+function applyFxPolicy() {
+  const chosen = FxPolicy.select(fxArchive, liveFx, Date.now());
+  hkdCny = chosen.rate;
+  if ($('fxStatus')) $('fxStatus').textContent = chosen.label +
+    (chosen.rate ? ' · 1 港元 = ' + chosen.rate + ' 人民币 · 报价时间 ' + chosen.quotedAt.replace('T',' ') : '') +
+    '；全日市 16:00、半日市 12:00 锁定（北京时间，不含收市竞价）。';
+}
+async function loadFxArchive() {
+  if (fxArchiveLoading) return fxArchiveLoading;
+  if (Date.now()-fxArchiveFetched < 60000) return;
+  fxArchiveFetched = Date.now();
+  fxArchiveLoading = (async function() {
+    try {
+      const response = await fetch('https://raw.githubusercontent.com/EvanjyChen/ashare-board/main/data/hkd-cny.json?t=' + Math.floor(Date.now()/60000), {cache:'no-store', signal:AbortSignal.timeout(8000)});
+      if (!response.ok) throw new Error('FX archive unavailable');
+      const data = await response.json();
+      if (data.version!==1 || !Array.isArray(data.sessions) || !data.closes || !data.validFrom || !data.validThrough) throw new Error('Invalid FX archive');
+      fxArchive = data;
+      try { localStorage.setItem('ashare_fx_archive_v1', JSON.stringify(data)); } catch(e) {}
+    } catch(e) { /* Valid persisted archive remains available offline. */ }
+    finally { fxArchiveLoading=null; applyFxPolicy(); }
+  })();
+  return fxArchiveLoading;
+}
 function currencyRate(code) { return /^hk/.test(code) ? hkdCny : 1; }
 let chinaDateFormatter;
 function chinaDate() {
@@ -1524,7 +1552,7 @@ function renderOverview() {
   tp.title = "逐股计算：当前市值＋今日卖出收入－今日买入支出－昨日持仓按昨收估值。";
   let detail=$('pnlCalculation');
   if (!detail) { detail=document.createElement('div'); detail.id='pnlCalculation'; detail.style.cssText='font-size:12px;line-height:1.6;margin-top:8px;overflow-wrap:anywhere'; tp.parentNode.appendChild(detail); }
-  detail.textContent=chinaDate()+' · 按录入的交易日期逐股汇总（含今日清仓），不计转入、转出及调平。港股按当前汇率折算，不含隔夜汇兑损益、手续费。'+(c.todayComplete ? '' : '部分行情未更新至今日、汇率缺失或持仓与流水不一致，暂不显示合计。');
+  detail.textContent=chinaDate()+' · 按录入的交易日期逐股汇总（含今日清仓），不计转入、转出及调平。港股按盘中实时／收盘锁定汇率折算，不含隔夜汇兑损益、手续费。'+(c.todayComplete ? '' : '部分行情未更新至今日、汇率缺失或持仓与流水不一致，暂不显示合计。');
   tp.className = "v " + pnlClass(c.todayPnl);
 
   const ap = $("totalPnl");
@@ -2681,7 +2709,7 @@ function bindEvents() {
   });
 
   document.addEventListener("visibilitychange", function () {
-    if (!document.hidden && MODE === "board") pullState();
+    if (!document.hidden) { loadFxArchive(); refreshQuotes(); if (MODE === 'board') pullState(); }
   });
 }
 
@@ -2692,7 +2720,7 @@ function isTradingTime() {
   if (p.weekday === 'Sat' || p.weekday === 'Sun') return false;
   const mins = Number(p.hour) * 60 + Number(p.minute);
   const hasHK = state.rows.some(function(r) { return /^hk/.test(r.code) && r.qty > 0; });
-  return (mins >= 555 && mins <= 690) || (mins >= 780 && mins <= (hasHK ? 970 : 910));
+  return (mins >= 555 && mins <= (hasHK ? 720 : 690)) || (mins >= 780 && mins <= (hasHK ? 970 : 910));
 }
 
 // 处理一次性导入链接（用于换设备/换域名后迁移编辑数据）：
@@ -2763,6 +2791,8 @@ function init() {
   renderAll();
   renderHistory();
   suppressAutoPush = false;
+  loadFxArchive().then(function() { renderAll(); });
+  setInterval(function() { applyFxPolicy(); renderAll(); loadFxArchive().then(function() { renderAll(); }); }, 30000);
   refreshQuotes(); // 首次打开总是拉一次（非交易时间也能看到最新收盘价）
   // 定时刷新仅交易时段生效；非交易时间只有手动添加股票/保存时才触发刷新
   refreshTimer = setInterval(function () {
@@ -2779,3 +2809,4 @@ init();
 </script>
 </body>
 </html>
+

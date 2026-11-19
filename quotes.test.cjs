@@ -13,6 +13,7 @@ console.log('PASS: HK, Beijing, legacy Beijing prefix correction, Shanghai/Shenz
   const calls = [];
   const merged = {};
   const c = vm.createContext({
+    loadFxArchive:async()=>{}, applyFxPolicy:()=>{},
     state: {rows:[{code:'sh600519'},{code:'sh605179'}],pool:[],lists:[],txs:[]},
     normalizeCode:context.normalizeCode, isTodayStockTrade:()=>false,
     getProviderChain:()=>[
@@ -28,3 +29,4 @@ console.log('PASS: HK, Beijing, legacy Beijing prefix correction, Shanghai/Shenz
   assert.equal(merged.sh600519.price,1500);
   console.log('PASS: partial provider response retries missing stocks without overwriting successful quotes');
 })().catch(e=>{console.error(e);process.exitCode=1;});
+

@@ -1,0 +1,13 @@
+const {test}=require('node:test'), assert=require('node:assert/strict'), {select}=require('./fx-policy');
+const sessions=[{date:'2026-11-19',open:'2026-11-19T09:30:00+08:00',close:'2026-11-19T16:00:00+08:00'}, {date:'2026-11-20',open:'2026-11-20T09:30:00+08:00',close:'2026-11-20T12:00:00+08:00'}];
+const q={rate:.8496,quotedAt:'2026-11-19T15:59:59+08:00',closeAt:sessions[0].close};
+const data={validFrom:'2026-11-01',validThrough:'2027-01-01',sessions,closes:{'2026-11-19':q}};
+const choose=(time,live,archive=data)=>select(archive,live,Date.parse(time+'+08:00'));
+test('live during trading and lunch',()=>{for(const time of ['10:00:00','12:30:00','15:59:59']){const t='2026-11-19T'+time;assert.equal(choose(t,{rate:.85,quotedAt:t+'+08:00'}).rate,.85);}});
+test('close, night and next preopen ignore current FX',()=>{for(const t of ['2026-11-19T16:00:00','2026-11-20T01:25:00','2026-11-20T09:29:59'])assert.equal(choose(t,{rate:.9,quotedAt:t+'+08:00'}).rate,.8496);});
+test('fresh page can use archive with no live quote',()=>assert.equal(choose('2026-11-20T01:25:00',null).rate,.8496));
+test('next open requires fresh live quote',()=>assert.equal(choose('2026-11-20T09:30:00',q).rate,null));
+test('missing half-day close never falls back to night or previous close',()=>assert.equal(choose('2026-11-20T12:00:00',{rate:.9,quotedAt:'2026-11-20T12:00:00+08:00'}).rate,null));
+test('weekend uses half-day snapshot',()=>{const a=structuredClone(data);a.closes['2026-11-20']={rate:.85,quotedAt:'2026-11-20T11:59:59+08:00',closeAt:sessions[1].close};assert.equal(choose('2026-11-22T12:00:00',null,a).rate,.85);});
+test('rejects post-close, stale and malformed snapshot',()=>{for(const time of ['16:00:01','15:59:00','bogus']){const a=structuredClone(data);a.closes['2026-11-19'].quotedAt='2026-11-19T'+time+'+08:00';assert.equal(choose('2026-11-20T01:00:00',null,a).rate,null);}});
+test('expired calendar fails closed',()=>assert.equal(choose('2027-01-02T01:00:00',null).rate,null));

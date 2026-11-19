@@ -1,0 +1,24 @@
+/* HK valuation policy. Archive dates follow HKEX, not the device timezone. */
+(function(root) {
+  'use strict';
+  function select(data, live, now) {
+    const day = new Intl.DateTimeFormat('en-CA', {timeZone:'Asia/Hong_Kong',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(now));
+    if (!data || day < data.validFrom || day > data.validThrough) return {rate:null,label:'交易日历不可用，等待更新'};
+    const session=data.sessions.find(s=>s.date===day);
+    // Lunch remains within today's session; only final close freezes valuation.
+    if (session && now>=Date.parse(session.open) && now<Date.parse(session.close)) {
+      const age=live ? now-Date.parse(live.quotedAt) : Infinity;
+      if (!live || !Number.isFinite(live.rate) || live.rate<=0 || !Number.isFinite(age) || age< -5000 || age>180000) return {rate:null,label:'实时汇率暂不可用'};
+      return {...live,label:'盘中实时汇率'};
+    }
+    const completed=data.sessions.filter(s=>Date.parse(s.close)<=now).at(-1);
+    const q=completed && data.closes[completed.date];
+    const age=q ? Date.parse(completed.close)-Date.parse(q.quotedAt) : Infinity;
+    if (!q || !Number.isFinite(q.rate) || q.rate<=0 || !Number.isFinite(age) || age<0 || age>30000 || Date.parse(q.closeAt)!==Date.parse(completed.close))
+      return {rate:null,label:(completed ? completed.date+' ' : '')+'收盘汇率待采集，请稍后刷新'};
+    return {...q,label:completed.date+' 收盘锁定汇率'};
+  }
+  const api={select};
+  if (typeof module!=='undefined' && module.exports) module.exports=api;
+  else root.FxPolicy=api;
+})(typeof window==='undefined' ? globalThis : window);
