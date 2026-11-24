@@ -21,6 +21,13 @@
       "sell": 0.877,
       "mid": 0.8515,
       "source": "https://www.sse.com.cn/services/hkexsc/home/exchange/data_1134.js"
+    },
+    "2026-11-24": {
+      "date": "2026-11-24",
+      "buy": 0.8245,
+      "sell": 0.8755,
+      "mid": 0.85,
+      "source": "https://www.sse.com.cn/services/hkexsc/home/exchange/data_1134.js"
     }
   },
   "settlement": {
@@ -46,5 +53,5 @@
       "source": "https://www.sse.com.cn/services/hkexsc/home/ratios/data_1136.js"
     }
   },
-  "updatedAt": "2026-11-23T20:09:15.825626+00:00"
+  "updatedAt": "2026-11-24T09:49:22.965217+00:00"
 }
