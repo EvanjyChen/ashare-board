@@ -759,7 +759,7 @@ function normalizeTx(tx) {
     sellFee: Number(tx.sellFee) || 0,
     feeSource: String(tx.feeSource || ''),
     realizedPnl: Number(tx.realizedPnl) || 0,
-    tradeDate: tx.tradeDate || String(tx.time || '').slice(0, 10),
+    tradeDate: tx.tradeDate || beijingDate(tx.time),
     time: tx.time || ""
   };
   if ((type === "买入" || type === "卖出") && !out.code) return null;
@@ -1239,13 +1239,17 @@ function doTrade(isBuy) {
  * =================================================================== */
 
 // 毫秒/秒时间戳 -> 本地日期 "YYYY-MM-DD"
+function beijingDate(value) {
+  const d=new Date(value);
+  return Number.isFinite(d.getTime()) ? new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(d) : '';
+}
 function tsToLocalDateStr(t) {
   t = Number(t) || 0;
   if (!t) return "";
   if (t < 1e12) t *= 1000; // 秒级时间戳转毫秒
   const d = new Date(t);
   const p = function (n) { return (n < 10 ? "0" : "") + n; };
-  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+  return beijingDate(d);
 }
 
 // 拆分 "sh600519" -> {mkt:"SH", num:"600519"}
@@ -1481,7 +1485,7 @@ function autoFillNames() {
 // 交易日按用户录入的字面日期归属，旧 ISO 时间不再做时区换日。
 function isTodayStockTrade(tx) {
   return tx && (tx.type === '买入' || tx.type === '卖出') &&
-    (tx.tradeDate || String(tx.time || '').slice(0, 10)) === chinaDate();
+    (tx.tradeDate || beijingDate(tx.time)) === chinaDate();
 }
 function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
   if (!Number.isFinite(currentQty) || currentQty < 0 || !Number.isFinite(currentPrice) || currentPrice <= 0) return null;
@@ -1489,7 +1493,7 @@ function calcLiveDayPnl(code, currentQty, currentPrice, prevClose) {
   const today = chinaDate();
   const txs = (state.txs || []).filter(function(tx) {
     return tx && (tx.type === '买入' || tx.type === '卖出') &&
-      (tx.tradeDate || String(tx.time || '').slice(0, 10)) === today && normalizeCode(tx.code) === code;
+      (tx.tradeDate || beijingDate(tx.time)) === today && normalizeCode(tx.code) === code;
   });
   for (const tx of txs) {
     const qty = Number(tx.qty), price = Number(tx.price);
@@ -1634,7 +1638,7 @@ function calc() {
   let todayComplete = true;
   const today = chinaDate();
   const dayCodes = new Set((state.txs || []).filter(function(tx) {
-    return tx && (tx.type === '买入' || tx.type === '卖出') && (tx.tradeDate || String(tx.time || '').slice(0, 10)) === today;
+    return tx && (tx.type === '买入' || tx.type === '卖出') && (tx.tradeDate || beijingDate(tx.time)) === today;
   }).map(function(tx) { return normalizeCode(tx.code); }));
   const calculationRows = state.rows.slice();
   dayCodes.forEach(function(code) {
@@ -1945,7 +1949,7 @@ function txsForCode(code) {
 }
 
 function renderTxLine(tx) {
-  const date = tx.tradeDate || (tx.time ? String(tx.time).slice(0, 10) : "--");
+  const date = tx.tradeDate || (tx.time ? beijingDate(tx.time) : "--");
   const realized = tx.type === "卖出" && tx.realizedPnl ? '<span class="' + pnlClass(tx.realizedPnl) + '">' + fmtSigned(tx.realizedPnl) + '</span>' : "";
   const settleBtn = MODE === 'edit' && /^hk/.test(normalizeCode(tx.code)) && (tx.type==='买入'||tx.type==='卖出') ? '<button class="tx-del" data-settle-tx="'+tx._index+'">'+'人民币实际结算金额'+'</button>' : '';
   const hkTrade=/^hk/.test(normalizeCode(tx.code)) && (tx.type==='买入'||tx.type==='卖出');
@@ -1996,7 +2000,7 @@ function deleteTrade(index) {
     row.qty = Math.round(((Number(row.qty) || 0) + qty) * 10000) / 10000;
     row.realizedPnl = Math.round(((Number(row.realizedPnl) || 0) - (Number(tx.realizedPnl) || 0)) * 100) / 100;
     row.realizedCost = Math.max(0, Math.round(((Number(row.realizedCost) || 0) - ((Number(row.cost) || 0) * qty)) * 100) / 100);
-    const date = tx.time ? String(tx.time).slice(0, 10) : localDateStr();
+    const date = tx.time ? beijingDate(tx.time) : localDateStr();
     row.realizedByDate = row.realizedByDate || {};
     row.realizedValueByDate = row.realizedValueByDate || {};
     removeDateAmount(row.realizedByDate, date, Number(tx.realizedPnl) || 0);
@@ -2191,7 +2195,7 @@ function escapeHtml(s) {
 function localDateStr() {
   const d = new Date();
   const p = function (n) { return (n < 10 ? "0" : "") + n; };
-  return d.getFullYear() + "-" + p(d.getMonth() + 1) + "-" + p(d.getDate());
+  return beijingDate(d);
 }
 
 // 每日 15:30 后或首次打开页面时，若当日无快照则记录（日期优先取行情日期）
@@ -2203,7 +2207,7 @@ function maybeSnapshot() {
   let quoteDate = "";
   for (const code in quotes) { if (quotes[code].date) { quoteDate = quotes[code].date; break; } }
   const today = chinaDate();
-  if (quoteDate !== today) return; // 周末、节假日或旧行情不生成当日收盘记录
+  if (!state.rows.some(function(r) { return r.qty > 0; }) && quoteDate !== today) return; // 持仓日期由下方逐一校验，观察股旧行情不得阻断保存
   if (state.rows.some(function (r) { return r.qty > 0 && (!quotes[r.code] || quotes[r.code].date !== today); })) return;
 
   const now = new Date();
