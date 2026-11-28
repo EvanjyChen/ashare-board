@@ -2211,7 +2211,17 @@ function maybeSnapshot() {
   const afterClose = chinaHour >= (state.rows.some(function (r) { return /^hk/.test(r.code) && r.qty > 0; }) ? 17 : 16);
 
   const snaps = loadSnapshots();
-  const hasToday = snaps.some(function (s) { return s.date === today && s.isClose === true; });
+  const existing = snaps.find(function (s) { return s.date === today && s.isClose === true; });
+  const hasToday = !!existing;
+  // Enrich only the unchanged closing portfolio, without replacing its valuation.
+  if (existing && afterClose && !Number.isFinite(existing.stockDayPnl) &&
+      Number.isFinite(c.todayPnl) && Math.abs(existing.stockValue-c.stockValue)<0.011 &&
+      Math.abs(existing.cash-c.cash)<0.011) {
+    existing.stockDayPnl=c.todayPnl;
+    saveSnapshots(snaps);
+    schedulePush();
+    renderHistory();
+  }
   if (!hasToday && afterClose) {
     const oldIndex = snaps.findIndex(function (s) { return s.date === today; });
     if (oldIndex >= 0) snaps.splice(oldIndex, 1);
