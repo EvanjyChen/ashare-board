@@ -2242,7 +2242,6 @@ function navHistory(records, startDate, txs) {
 function exportNavHistory() {
   const start='2026-10-08';
   const rows=navHistory(loadSnapshots(),start,state.txs);
-  if (!rows.length || rows[0].date !== start) { toast('缺少 2026-10-08 收盘基准，请先提供当天现金和持仓'); return; }
   if (!rows.length) { toast('暂无有效收盘记录'); return; }
   const csv='\uFEFF日期,股票市值,现金,净资产,变化金额,变化率%,基准日期\r\n'+rows.map(function(s) { return [s.date,s.stockValue,s.cash,s.total,s.delta,s.pct,s.baseDate].join(','); }).join('\r\n');
   const url=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));
@@ -2251,11 +2250,10 @@ function exportNavHistory() {
 function renderHistory() {
   const start='2026-10-08';
   const records=navHistory(loadSnapshots(),start,state.txs);
-  const hasBaseline=records.length > 0 && records[0].date === start;
-  const snaps = hasBaseline ? records : [];
+  const snaps = records;
   const first=snaps[0], last=snaps[snaps.length-1];
   $('navSummary').textContent = last ? '有效记录 '+snaps.length+' 天 · 最新净资产 ¥'+fmt(last.total)+' · 最新盈亏 '+fmtSigned(last.delta)+' 元 · 区间盈亏 '+(snaps.length > 1 ? fmtSigned(last.total-first.total-netExternalFlow(state.txs,first.date,last.date))+' 元' : '--') : '尚无有效收盘净值';
-  $('navSummary').textContent = '固定基准：2026-10-08 收盘；10-09 起计算变化 · ' + (hasBaseline ? $('navSummary').textContent : '缺少基准日现金和持仓数据，暂不计算历史变化。');
+  $('navSummary').textContent = first ? '实际起始基准：'+first.date+' 收盘 · '+$('navSummary').textContent+' · 变化相对上一条有效收盘记录，已扣除转入转出；缺失日期不补算。' : '尚无有效收盘记录；编辑端在收盘后取得当日行情时会保存记录。';
   const tbody = $("historyRows");
   tbody.innerHTML = "";
   $("historyEmpty").hidden = snaps.length > 0;
